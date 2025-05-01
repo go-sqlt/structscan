@@ -192,112 +192,121 @@ func (s *Struct[T]) Field(path string) (Field[T], error) {
 	return field, nil
 }
 
-func (s *Struct[T]) String(path string) (Scanner[T], error) {
+func (s *Struct[T]) Scan(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.String()
+	return f.Scan()
 }
 
-func (s *Struct[T]) Int(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanString(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.Int()
+	return f.ScanString()
 }
 
-func (s *Struct[T]) Uint(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanInt(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.Uint()
+	return f.ScanInt()
 }
 
-func (s *Struct[T]) Float(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanUint(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.Float()
+	return f.ScanUint()
 }
 
-func (s *Struct[T]) Bool(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanFloat(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.Bool()
+	return f.ScanFloat()
 }
 
-func (s *Struct[T]) Bytes(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanBool(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.Bytes()
+	return f.ScanBool()
 }
 
-func (s *Struct[T]) Time(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanBytes(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.Time()
+	return f.ScanBytes()
 }
 
-func (s *Struct[T]) JSON(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanTime(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.JSON()
+	return f.ScanTime()
 }
 
-func (s *Struct[T]) Binary(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanJSON(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.Binary()
+	return f.ScanJSON()
 }
 
-func (s *Struct[T]) Text(path string) (Scanner[T], error) {
+func (s *Struct[T]) ScanBinary(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.Text()
+	return f.ScanBinary()
 }
 
-func (s *Struct[T]) StringTime(path string, layout string, location string) (Scanner[T], error) {
+func (s *Struct[T]) ScanText(path string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.StringTime(layout, location)
+	return f.ScanText()
 }
 
-func (s *Struct[T]) StringSlice(path string, sep string) (Scanner[T], error) {
+func (s *Struct[T]) ScanStringTime(path string, layout string, location string) (Scanner[T], error) {
 	f, err := s.Field(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return f.StringSlice(sep)
+	return f.ScanStringTime(layout, location)
+}
+
+func (s *Struct[T]) ScanStringSlice(path string, sep string) (Scanner[T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return f.ScanStringSlice(sep)
 }
 
 type Field[T any] struct {
@@ -327,7 +336,19 @@ func (f Field[T]) Access(t *T) reflect.Value {
 	return v
 }
 
-func (f Field[T]) String() (Scanner[T], error) {
+var scannerType = reflect.TypeFor[sql.Scanner]()
+
+func (f Field[T]) Scan() (Scanner[T], error) {
+	if !f.pointerType.Implements(scannerType) {
+		return nil, fmt.Errorf("invalid field type %s for scanner", f.typ)
+	}
+
+	return scanAny(f, func(dest reflect.Value, value any) error {
+		return dest.Addr().Interface().(sql.Scanner).Scan(value)
+	}), nil
+}
+
+func (f Field[T]) ScanString() (Scanner[T], error) {
 	if f.typ.Kind() != reflect.String {
 		return nil, fmt.Errorf("invalid field type %s for string scanner", f.typ)
 	}
@@ -339,7 +360,7 @@ func (f Field[T]) String() (Scanner[T], error) {
 	}), nil
 }
 
-func (f Field[T]) Int() (Scanner[T], error) {
+func (f Field[T]) ScanInt() (Scanner[T], error) {
 	switch f.typ.Kind() {
 	default:
 		return nil, fmt.Errorf("invalid field type %s for int scanner", f.typ)
@@ -352,7 +373,7 @@ func (f Field[T]) Int() (Scanner[T], error) {
 	}
 }
 
-func (f Field[T]) Uint() (Scanner[T], error) {
+func (f Field[T]) ScanUint() (Scanner[T], error) {
 	switch f.typ.Kind() {
 	default:
 		return nil, fmt.Errorf("invalid field type %s for uint scanner", f.typ)
@@ -365,7 +386,7 @@ func (f Field[T]) Uint() (Scanner[T], error) {
 	}
 }
 
-func (f Field[T]) Float() (Scanner[T], error) {
+func (f Field[T]) ScanFloat() (Scanner[T], error) {
 	switch f.typ.Kind() {
 	default:
 		return nil, fmt.Errorf("invalid field type %s for float scanner", f.typ)
@@ -378,7 +399,7 @@ func (f Field[T]) Float() (Scanner[T], error) {
 	}
 }
 
-func (f Field[T]) Bool() (Scanner[T], error) {
+func (f Field[T]) ScanBool() (Scanner[T], error) {
 	if f.typ.Kind() != reflect.Bool {
 		return nil, fmt.Errorf("invalid field type %s for bool scanner", f.typ)
 	}
@@ -392,7 +413,7 @@ func (f Field[T]) Bool() (Scanner[T], error) {
 
 var byteSliceType = reflect.TypeFor[[]byte]()
 
-func (f Field[T]) Bytes() (Scanner[T], error) {
+func (f Field[T]) ScanBytes() (Scanner[T], error) {
 	if f.typ != byteSliceType {
 		return nil, fmt.Errorf("invalid field type %s for bytes scanner", f.typ)
 	}
@@ -406,7 +427,7 @@ func (f Field[T]) Bytes() (Scanner[T], error) {
 
 var timeType = reflect.TypeFor[time.Time]()
 
-func (f Field[T]) Time() (Scanner[T], error) {
+func (f Field[T]) ScanTime() (Scanner[T], error) {
 	if f.typ != timeType {
 		return nil, fmt.Errorf("invalid field type %s for time scanner", f.typ)
 	}
@@ -418,7 +439,7 @@ func (f Field[T]) Time() (Scanner[T], error) {
 	}), nil
 }
 
-func (f Field[T]) JSON() (Scanner[T], error) {
+func (f Field[T]) ScanJSON() (Scanner[T], error) {
 	return scanAny(f, func(dest reflect.Value, value []byte) error {
 		return json.Unmarshal(value, dest.Addr().Interface())
 	}), nil
@@ -426,7 +447,7 @@ func (f Field[T]) JSON() (Scanner[T], error) {
 
 var binaryMarshalerType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
 
-func (f Field[T]) Binary() (Scanner[T], error) {
+func (f Field[T]) ScanBinary() (Scanner[T], error) {
 	if !f.pointerType.Implements(binaryMarshalerType) {
 		return nil, fmt.Errorf("invalid field type %s for binary scanner", f.typ)
 	}
@@ -438,7 +459,7 @@ func (f Field[T]) Binary() (Scanner[T], error) {
 
 var textUnarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
 
-func (f Field[T]) Text() (Scanner[T], error) {
+func (f Field[T]) ScanText() (Scanner[T], error) {
 	if !f.pointerType.Implements(textUnarshalerType) {
 		return nil, fmt.Errorf("invalid field type %s for text scanner", f.typ)
 	}
@@ -448,7 +469,7 @@ func (f Field[T]) Text() (Scanner[T], error) {
 	}), nil
 }
 
-func (f Field[T]) StringSlice(sep string) (Scanner[T], error) {
+func (f Field[T]) ScanStringSlice(sep string) (Scanner[T], error) {
 	if f.typ.Kind() != reflect.Slice || f.typ.Elem().Kind() != reflect.String {
 		return nil, fmt.Errorf("invalid field type %s for string slice scanner", f.typ)
 	}
@@ -511,7 +532,7 @@ var layoutMap = map[string]string{
 	"StampNano":   time.StampNano,
 }
 
-func (f Field[T]) StringTime(layout string, location string) (Scanner[T], error) {
+func (f Field[T]) ScanStringTime(layout string, location string) (Scanner[T], error) {
 	if f.typ != timeType {
 		return nil, fmt.Errorf("invalid field type %s for string time scanner", f.typ)
 	}

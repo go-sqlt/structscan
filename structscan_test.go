@@ -2,6 +2,7 @@ package structscan_test
 
 import (
 	"database/sql"
+	"math/big"
 	"testing"
 	"time"
 
@@ -12,9 +13,11 @@ import (
 type Book struct {
 	ID          int64
 	Title       string
-	Author      string
+	Author      sql.Null[string]
 	Genres      []string
 	PublishedAt time.Time
+	Year        *big.Int
+	Meta        []byte
 }
 
 func TestBook(t *testing.T) {
@@ -69,6 +72,8 @@ func TestBook(t *testing.T) {
 			, author 
 			, published_at 
 			, GROUP_CONCAT(genres.name)
+			, '2025'
+			, 'some raw data'
 		FROM books
 		LEFT JOIN book_genres ON book_genres.book_id = books.id
 		LEFT JOIN genres ON genres.id = book_genres.genre_id
@@ -77,13 +82,15 @@ func TestBook(t *testing.T) {
 
 	bookstruct := structscan.New[Book]()
 
-	id := must(bookstruct.Int("ID")).test(t)
-	title := must(bookstruct.String("Title")).test(t)
-	author := must(bookstruct.String("Author")).test(t)
-	publishedAt := must(bookstruct.Time("PublishedAt")).test(t)
-	genres := must(bookstruct.StringSlice("Genres", ",")).test(t)
+	id := must(bookstruct.ScanInt("ID")).test(t)
+	title := must(bookstruct.ScanString("Title")).test(t)
+	author := must(bookstruct.Scan("Author")).test(t)
+	publishedAt := must(bookstruct.ScanTime("PublishedAt")).test(t)
+	genres := must(bookstruct.ScanStringSlice("Genres", ",")).test(t)
+	year := must(bookstruct.ScanText("Year")).test(t)
+	meta := must(bookstruct.ScanBytes("Meta")).test(t)
 
-	books := must(structscan.All(rows, id, title, author, publishedAt, genres)).test(t)
+	books := must(structscan.All(rows, id, title, author, publishedAt, genres, year, meta)).test(t)
 
 	if len(books) != 2 {
 		t.Fatal("invalid number of books", len(books))
