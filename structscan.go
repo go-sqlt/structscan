@@ -50,6 +50,10 @@ func One[T any](rows *sql.Rows, scanners ...Scanner[T]) (T, error) {
 		err error
 	)
 
+	if !rows.Next() {
+		return one, twoErr(sql.ErrNoRows, rows.Close())
+	}
+
 	if err = rows.Scan(dest...); err != nil {
 		return one, twoErr(err, rows.Close())
 	}
@@ -470,7 +474,7 @@ func (f Field[T]) ScanText() (Scanner[T], error) {
 }
 
 func (f Field[T]) ScanStringSlice(sep string) (Scanner[T], error) {
-	if f.typ.Kind() != reflect.Slice || f.typ.Elem().Kind() != reflect.String {
+	if f.typ.Kind() != reflect.Slice {
 		return nil, fmt.Errorf("invalid field type %s for string slice scanner", f.typ)
 	}
 
@@ -483,6 +487,10 @@ func (f Field[T]) ScanStringSlice(sep string) (Scanner[T], error) {
 		indirections++
 
 		continue
+	}
+
+	if elem.Kind() != reflect.String {
+		return nil, fmt.Errorf("invalid field type %s for string slice scanner", f.typ)
 	}
 
 	return scanAny(f, func(dest reflect.Value, value string) error {
