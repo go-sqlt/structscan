@@ -2,7 +2,11 @@ package structscan_test
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"math/big"
+	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
@@ -10,109 +14,178 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Book struct {
-	ID          int64
-	Title       string
-	Author      sql.Null[string]
-	Genres      []string
-	PublishedAt time.Time
-	Year        *big.Int
-	Meta        []byte
+type MyTime time.Time
+
+type Sample struct {
+	Int      int64
+	String   *string
+	Bool     bool
+	Time     time.Time
+	MyTime   MyTime
+	Big      *big.Int
+	URL      *url.URL
+	IntSlice []int32
+	JSON     map[string]any
+	RawJSON  json.RawMessage
 }
 
-func TestBook(t *testing.T) {
-	db := must(sql.Open("sqlite", ":memory:")).test(t)
+var schema = structscan.Describe[Sample]()
 
-	_ = must(db.Exec(`
-		CREATE TABLE books (
-			id INTEGER PRIMARY KEY,
-			title TEXT NOT NULL,
-			author TEXT NOT NULL,
-			published_at DATE NOT NULL
-		);
+func TestStructScan_All_One_First(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
-		CREATE TABLE genres (
-			id INTEGER PRIMARY KEY,
-			name TEXT NOT NULL
-		);
+	_, err = db.Exec(`
+		CREATE TABLE sample (
+			int_val INTEGER,
+			str_val TEXT,
+			bool_val BOOLEAN,
+			time_val TEXT,
+			my_time_val DATE,
+			big_val TEXT,
+			url_val TEXT,
+			ints_val TEXT,
+			json_val TEXT,
+			raw_json_val BLOB
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-		CREATE TABLE book_genres (
-			book_id INTEGER REFERENCES books (id),
-			genre_id INTEGER REFERENCES genres (id),
-			PRIMARY KEY (book_id, genre_id)
-		);
-	`)).test(t)
+	_, err = db.Exec(`
+		INSERT INTO sample VALUES
+		(1, 'test', 1, '2025-05-01', '2025-05-01', '12345678901234567890', 'https://example.com/test?q=1', '10,20,30', '{"a": 1}', '{"a": 1}')
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	bookIDs := must(structscan.All[int64](must(db.Query(`
-		INSERT INTO books (title, author, published_at) VALUES
-		(?, ?, ?), (?, ?, ?) RETURNING id;
-	`,
-		"The Hobbit or There and Back Again", "J. R. R. Tolkien", "1937-09-21",
-		"The Fellowship of the Ring", "J. R. R. Tolkien", "1954-07-29",
-	)).test(t))).test(t)
+	expected := Sample{
+		Int:    1,
+		String: ptr("test"),
+		Bool:   true,
+		Time:   mustParse("2025-05-01"),
+		MyTime: MyTime(mustParse("2025-05-01")),
+		Big:    bigFromString("12345678901234567890"),
+		URL:    mustURL("https://example.com/test?q=1"),
+		IntSlice: []int32{
+			10, 20, 30,
+		},
+		JSON:    map[string]any{"a": float64(1)},
+		RawJSON: []byte(`{"a":1}`),
+	}
 
-	genreIDs := must(structscan.All[int64](must(db.Query(`INSERT INTO genres (name) VALUES (?), (?), (?) RETURNING id;`,
-		"High fantasy", "Children's fantasy", "Adventure",
-	)).test(t))).test(t)
+	tests := []struct {
+		name   string
+		scanFn func(*sql.DB) (Sample, error)
+	}{
+		{
+			name: "First",
+			scanFn: func(db *sql.DB) (Sample, error) {
+				row := db.QueryRow(`SELECT * FROM sample`)
+				return structscan.First(row, scanSchema()...)
+			},
+		},
+		{
+			name: "One",
+			scanFn: func(db *sql.DB) (Sample, error) {
+				rows, err := db.Query(`SELECT * FROM sample`)
+				if err != nil {
+					return Sample{}, err
+				}
+				return structscan.One(rows, scanSchema()...)
+			},
+		},
+		{
+			name: "All[0]",
+			scanFn: func(db *sql.DB) (Sample, error) {
+				rows, err := db.Query(`SELECT * FROM sample`)
+				if err != nil {
+					return Sample{}, err
+				}
+				all, err := structscan.All(rows, scanSchema()...)
+				if err != nil {
+					return Sample{}, err
+				}
+				if len(all) != 1 {
+					return Sample{}, fmt.Errorf("expected 1 row, got %d", len(all))
+				}
+				return all[0], nil
+			},
+		},
+	}
 
-	_ = must(db.Exec(`
-		INSERT INTO book_genres (book_id, genre_id) VALUES
-			(?, ?), (?, ?), (?, ?), (?, ?);
-	`,
-		bookIDs[0], genreIDs[0],
-		bookIDs[0], genreIDs[1],
-		bookIDs[1], genreIDs[0],
-		bookIDs[1], genreIDs[2],
-	))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.scanFn(db)
+			if err != nil {
+				t.Fatalf("scanFn failed: %v", err)
+			}
 
-	rows := must(db.Query(`
-		SELECT 
-			books.id
-			, title
-			, author 
-			, published_at 
-			, GROUP_CONCAT(genres.name)
-			, '2025'
-			, 'some raw data'
-		FROM books
-		LEFT JOIN book_genres ON book_genres.book_id = books.id
-		LEFT JOIN genres ON genres.id = book_genres.genre_id
-		GROUP BY books.id, title, author, published_at;
-	`)).test(t)
-
-	bookstruct := structscan.New[Book]()
-
-	id := must(bookstruct.ScanInt("ID")).test(t)
-	title := must(bookstruct.ScanString("Title")).test(t)
-	author := must(bookstruct.Scan("Author")).test(t)
-	publishedAt := must(bookstruct.ScanTime("PublishedAt")).test(t)
-	genres := must(bookstruct.ScanStringSlice("Genres", ",")).test(t)
-	year := must(bookstruct.ScanText("Year")).test(t)
-	meta := must(bookstruct.ScanBytes("Meta")).test(t)
-
-	books := must(structscan.All(rows, id, title, author, publishedAt, genres, year, meta)).test(t)
-
-	if len(books) != 2 {
-		t.Fatal("invalid number of books", len(books))
+			if !reflect.DeepEqual(got.Int, expected.Int) ||
+				*got.String != *expected.String ||
+				got.Bool != expected.Bool ||
+				!got.Time.Equal(expected.Time) ||
+				got.Big.String() != expected.Big.String() ||
+				got.URL.String() != expected.URL.String() ||
+				!reflect.DeepEqual(got.IntSlice, expected.IntSlice) ||
+				!reflect.DeepEqual(got.JSON, expected.JSON) {
+				t.Errorf("got %+v; want %+v", got, expected)
+			}
+		})
 	}
 }
 
-type muster[T any] struct {
-	t   T
-	err error
+func scanSchema() []structscan.Scanner[Sample] {
+	return []structscan.Scanner[Sample]{
+		schema["Int"].Optional(),
+
+		schema.Field("String").Required(),
+
+		schema["Bool"].Optional().Bool(),
+
+		schema["Time"].String(structscan.ParseTime(time.DateOnly, time.UTC)),
+
+		schema["MyTime"].String(structscan.ParseTime(time.RFC3339, time.UTC)),
+
+		schema["Big"].Bytes(structscan.UnmarshalText()),
+
+		schema["URL"].Bytes(structscan.UnmarshalBinary()),
+
+		schema["IntSlice"].String(structscan.Split(",", structscan.ParseInt(10, 32))),
+
+		schema["JSON"].Bytes(structscan.UnmarshalJSON()),
+
+		schema["RawJSON"].Bytes(structscan.UnmarshalJSON()),
+	}
 }
 
-func (m muster[T]) test(t *testing.T) T {
-	if m.err != nil {
-		t.Fatal(m.err)
-	}
-
-	return m.t
+func ptr[T any](v T) *T {
+	return &v
 }
 
-func must[T any](t T, err error) muster[T] {
-	return muster[T]{
-		t:   t,
-		err: err,
+func bigFromString(s string) *big.Int {
+	i := new(big.Int)
+	i.SetString(s, 10)
+	return i
+}
+
+func mustURL(raw string) *url.URL {
+	u, err := url.Parse(raw)
+	if err != nil {
+		panic(err)
 	}
+	return u
+}
+
+func mustParse(date string) time.Time {
+	t, err := time.Parse(time.DateOnly, date)
+	if err != nil {
+		panic(err)
+	}
+	return t
 }

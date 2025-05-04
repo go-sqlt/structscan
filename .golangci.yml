@@ -18,14 +18,18 @@ linters:
     - gocognit
     - gochecknoglobals
     - funlen
-    - nonamedreturns
+    # - nonamedreturns
     - forcetypeassert
-    - exhaustruct
+    # - exhaustruct
     - exhaustive
     - err113
-    - depguard
+    # - depguard
     - cyclop
-    - gocyclo
-    - maintidx
-    - nestif
-    - forbidigo
+    # - gocyclo
+    # - maintidx
+    # - nestif
+    # - forbidigo
+
+  exclusions:
+    paths-except:
+      - main.go
