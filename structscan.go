@@ -7,92 +7,72 @@
 //
 // Example:
 //
-// package main
-//
-// import (
-//
-//	"database/sql"
-//	"fmt"
-//	"math/big"
-//	"net/url"
-//	"time"
-//
-//	"github.com/go-sqlt/structscan"
-//	_ "modernc.org/sqlite"
-//
-// )
-//
-//	type Data struct {
-//		Int      int64
-//		String   *string
-//		Bool     bool
-//		Time     time.Time
-//		Big      *big.Int
-//		URL      *url.URL
-//		IntSlice []int32
-//		JSON     map[string]any
-//	}
-//
-// // Schema holds a reflection-based description of the Data type.
-// // This provides addressable access to fields by name, for mapping values.
-// var Schema = structscan.Describe[Data]()
-//
-//	func main() {
-//		db, err := sql.Open("sqlite", ":memory:")
-//		if err != nil {
-//			panic(err)
-//		}
-//
-//		rows, err := db.Query(`
-//			SELECT
-//				100                                    -- Int (int64)
-//				, '200'                                -- String (*string)
-//				, true                                 -- Bool (bool)
-//				, '2025-05-01'                         -- Time (parsed from string)
-//				, '300'                                -- Big (decoded from text)
-//				, 'https://example.com/path?query=yes' -- URL (decoded from binary)
-//				, '400,500,600'                        -- IntSlice (comma-separated ints)
-//				, '{"hello":"world"}'                  -- JSON (parsed into a map)
-//		`)
-//		if err != nil {
-//			panic(err)
-//		}
-//
-//		// Use structscan to scan the row into a slice of Data structs.
-//		// Each field maps to a column, with optional decoding/parsing behavior.
-//		data, err := structscan.All(rows,
-//			// Scans an int64 value into the Int field.
-//			Schema["Int"],
-//
-//			// Fails if the value is NULL.
-//			Schema["String"].Required(),
-//
-//			// Scans a boolean directly.
-//			Schema["Bool"].Bool(),
-//
-//			// Parses a date string (in 'YYYY-MM-DD' format) into a time.Time.
-//			Schema["Time"].String(structscan.ParseTime(time.DateOnly, time.UTC)),
-//
-//			// Scans raw bytes and decodes them using encoding.TextUnmarshaler.
-//			// In this case, it populates a *big.Int from string like "300".
-//			Schema["Big"].Bytes(structscan.UnmarshalText()),
-//
-//			// Decodes binary input into a *url.URL using encoding.BinaryUnmarshaler.
-//			Schema["URL"].Bytes(structscan.UnmarshalBinary()),
-//
-//			// Splits a comma-separated string and parses each part into an int32 slice.
-//			Schema["IntSlice"].String(structscan.Split(",", structscan.ParseInt(10, 32))),
-//
-//			// Scans bytes and parses them as JSON into a map[string]any.
-//			Schema["JSON"].Bytes(structscan.UnmarshalJSON()),
-//		)
-//		if err != nil {
-//			panic(err)
-//		}
-//
-//		fmt.Println(data)
-//		// [{100 0x1400012c240 true 2025-05-01 00:00:00 +0000 UTC 300 https://example.com/path?query=yes [400 500 600] map[hello:world]}]
-//	}
+/*
+	package main
+
+	import (
+		"database/sql"
+		"fmt"
+		"math/big"
+		"net/url"
+		"time"
+
+		"github.com/go-sqlt/structscan"
+		_ "modernc.org/sqlite"
+	)
+
+	type Data struct {
+		Int      int64
+		String   *string
+		Bool     *bool
+		Time     time.Time
+		Big      *big.Int
+		URL      *url.URL
+		IntSlice []int32
+		JSON     map[string]any
+	}
+
+	var Schema = structscan.Describe[Data]()
+
+	func main() {
+		db, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			panic(err)
+		}
+
+		rows, err := db.Query(`
+			SELECT
+				100 as int
+				, NULL as string
+				, true as bool
+				, '2025-05-01' as time
+				, '300' as big
+				, 'https://example.com/path?query=yes' as url
+				, '400,500,600' as int_slice
+				, '{"hello":"world"}' as json
+		`)
+		if err != nil {
+			panic(err)
+		}
+
+		data, err := structscan.All(rows,
+			Schema["Int"],             // int64
+			Schema["String"],          // *string
+			Schema["Bool"].Required(), // bool
+			Schema["Time"].String(structscan.ParseTime(time.DateOnly, time.UTC)),          // string + time.ParseInLocation
+			Schema["Big"].Bytes(structscan.UnmarshalText()),                               // []byte + encoding.UnmarshalText
+			Schema["URL"].Bytes(structscan.UnmarshalBinary()),                             // []byte + encoding.UnmarshalBinary
+			Schema["IntSlice"].String(structscan.Split(",", structscan.ParseInt(10, 32))), // string + strings.Split + strconv.ParseInt
+			Schema["JSON"].Bytes(structscan.UnmarshalJSON()),                              // []byte + json.Unmarshal
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Println(data[0])
+		// {100 <nil> 0x14000098368 2025-05-01 00:00:00 +0000 UTC 300 https://example.com/path?query=yes [400 500 600] map[hello:world]}
+	}
+*/
 package structscan
 
 import (
@@ -308,6 +288,14 @@ func (s Schema[T]) Field(path string) *Field[T] {
 	return f
 }
 
+func (s Schema[T]) Scan() (any, func(t *T) error, error) {
+	if s[""] == nil {
+		return nil, nil, fmt.Errorf("invalid schema: %s", reflect.TypeFor[T]())
+	}
+
+	return s[""].Scan()
+}
+
 // Field contains metadata about a struct field, including its type, index path in the struct,
 // and whether it is required (i.e., cannot be nil). Used for scanning and binding.
 type Field[T any] struct {
@@ -364,10 +352,10 @@ func (f *Field[T]) Value(t *T) reflect.Value {
 // The behavior differs based on whether the field is marked required.
 func (f *Field[T]) Scan() (any, func(*T) error, error) {
 	if f.required {
-		src := reflect.New(f.typ).Elem()
+		src := reflect.New(f.typ)
 
-		return src.Addr().Interface(), func(t *T) error {
-			f.Value(t).Set(src)
+		return src.Interface(), func(t *T) error {
+			f.Value(t).Set(src.Elem())
 
 			return nil
 		}, nil
@@ -376,10 +364,6 @@ func (f *Field[T]) Scan() (any, func(*T) error, error) {
 	ptr := reflect.New(reflect.PointerTo(f.typ))
 
 	return ptr.Interface(), func(t *T) error {
-		if ptr.IsNil() {
-			return nil
-		}
-
 		elem := ptr.Elem()
 		if elem.IsNil() {
 			return nil
@@ -643,9 +627,9 @@ func ParseComplex(bitSize int) Decoder[string] {
 type Decoder[V any] func(dstType reflect.Type) (Assign[V], error)
 
 func noAssign[V any](dstType reflect.Type) (Assign[V], error) {
-	v := reflect.TypeFor[V]()
+	typ := reflect.TypeFor[V]()
 
-	switch v.Kind() {
+	switch typ.Kind() {
 	case reflect.String:
 		if dstType.Kind() == reflect.String {
 			return func(dst reflect.Value, src V) error {
@@ -682,7 +666,7 @@ func noAssign[V any](dstType reflect.Type) (Assign[V], error) {
 		}
 	}
 
-	if dstType == v {
+	if dstType == typ {
 		return func(dst reflect.Value, src V) error {
 			dst.SetBytes(any(src).([]byte))
 
@@ -690,7 +674,7 @@ func noAssign[V any](dstType reflect.Type) (Assign[V], error) {
 		}, nil
 	}
 
-	if v.ConvertibleTo(dstType) {
+	if typ.ConvertibleTo(dstType) {
 		return func(dst reflect.Value, src V) error {
 			dst.Set(reflect.ValueOf(src).Convert(dstType))
 
@@ -698,7 +682,7 @@ func noAssign[V any](dstType reflect.Type) (Assign[V], error) {
 		}, nil
 	}
 
-	return nil, fmt.Errorf("cannot convert %s to %s", v, dstType)
+	return nil, fmt.Errorf("cannot convert %s to %s", typ, dstType)
 }
 
 // Assign defines a function that sets a decoded value of type V into a reflect.Value.
@@ -828,7 +812,7 @@ func Split(sep string, decoders ...Decoder[string]) Decoder[string] {
 
 			dst.Set(reflect.MakeSlice(dstType, len(split), len(split)))
 
-			for i, v := range split {
+			for i, val := range split {
 				index := dst.Index(i)
 
 				for range indirections {
@@ -839,7 +823,7 @@ func Split(sep string, decoders ...Decoder[string]) Decoder[string] {
 					index = index.Elem()
 				}
 
-				if err = apply(index, v); err != nil {
+				if err = apply(index, val); err != nil {
 					return err
 				}
 			}

@@ -29,7 +29,7 @@ import (
 type Data struct {
 	Int      int64
 	String   *string
-	Bool     bool
+	Bool     *bool
 	Time     time.Time
 	Big      *big.Int
 	URL      *url.URL
@@ -37,8 +37,6 @@ type Data struct {
 	JSON     map[string]any
 }
 
-// Schema holds a reflection-based description of the Data type.
-// This provides addressable access to fields by name, for mapping values.
 var Schema = structscan.Describe[Data]()
 
 func main() {
@@ -49,52 +47,34 @@ func main() {
 
 	rows, err := db.Query(`
 		SELECT
-			100                                    -- Int (int64)
-			, '200'                                -- String (*string)
-			, true                                 -- Bool (bool)
-			, '2025-05-01'                         -- Time (parsed from string)
-			, '300'                                -- Big (decoded from text)
-			, 'https://example.com/path?query=yes' -- URL (decoded from binary)
-			, '400,500,600'                        -- IntSlice (comma-separated ints)
-			, '{"hello":"world"}'                  -- JSON (parsed into a map)
+			100 as int
+			, NULL as string
+			, true as bool
+			, '2025-05-01' as time
+			, '300' as big
+			, 'https://example.com/path?query=yes' as url
+			, '400,500,600' as int_slice
+			, '{"hello":"world"}' as json
 	`)
 	if err != nil {
 		panic(err)
 	}
 
-	// Use structscan to scan the row into a slice of Data structs.
-	// Each field maps to a column, with optional decoding/parsing behavior.
 	data, err := structscan.All(rows,
-		// Scans an int64 value into the Int field.
-		Schema["Int"],
-
-		// Fails if the value is NULL.
-		Schema["String"].Required(),
-
-		// Scans a boolean directly.
-		Schema["Bool"].Bool(),
-
-		// Parses a date string (in 'YYYY-MM-DD' format) into a time.Time.
-		Schema["Time"].String(structscan.ParseTime(time.DateOnly, time.UTC)),
-
-		// Scans raw bytes and decodes them using encoding.TextUnmarshaler.
-		// In this case, it populates a *big.Int from string like "300".
-		Schema["Big"].Bytes(structscan.UnmarshalText()),
-
-		// Decodes binary input into a *url.URL using encoding.BinaryUnmarshaler.
-		Schema["URL"].Bytes(structscan.UnmarshalBinary()),
-
-		// Splits a comma-separated string and parses each part into an int32 slice.
-		Schema["IntSlice"].String(structscan.Split(",", structscan.ParseInt(10, 32))),
-
-		// Scans bytes and parses them as JSON into a map[string]any.
-		Schema["JSON"].Bytes(structscan.UnmarshalJSON()),
+		Schema["Int"],             // int64
+		Schema["String"],          // *string
+		Schema["Bool"].Required(), // bool
+		Schema["Time"].String(structscan.ParseTime(time.DateOnly, time.UTC)),          // string + time.ParseInLocation
+		Schema["Big"].Bytes(structscan.UnmarshalText()),                               // []byte + encoding.UnmarshalText
+		Schema["URL"].Bytes(structscan.UnmarshalBinary()),                             // []byte + encoding.UnmarshalBinary
+		Schema["IntSlice"].String(structscan.Split(",", structscan.ParseInt(10, 32))), // string + strings.Split + strconv.ParseInt
+		Schema["JSON"].Bytes(structscan.UnmarshalJSON()),                              // []byte + json.Unmarshal
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println(data)
-	// [{100 0x1400012c240 true 2025-05-01 00:00:00 +0000 UTC 300 https://example.com/path?query=yes [400 500 600] map[hello:world]}]
+	fmt.Println(data[0])
+	// {100 <nil> 0x14000098368 2025-05-01 00:00:00 +0000 UTC 300 https://example.com/path?query=yes [400 500 600] map[hello:world]}
 }
 ```
