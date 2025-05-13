@@ -12,7 +12,7 @@ linters:
     - revive
     # - paralleltest
     # - containedctx
-    # - mnd
+    - mnd
     - lll
     - ireturn
     - gocognit

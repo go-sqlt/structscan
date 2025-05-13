@@ -1,78 +1,3 @@
-// Package structscan provides a flexible and composable mechanism for scanning SQL query results
-// into Go structs using reflection-based schema definitions and type-safe field bindings.
-//
-// It is designed to work with the standard `database/sql` package and supports optional and required fields,
-// automatic decoding of strings, numbers, booleans, JSON blobs, URLs, and custom types via interfaces such as
-// encoding.TextUnmarshaler and encoding.BinaryUnmarshaler.
-//
-// Example:
-//
-/*
-	package main
-
-	import (
-		"database/sql"
-		"fmt"
-		"math/big"
-		"net/url"
-		"time"
-
-		"github.com/go-sqlt/structscan"
-		_ "modernc.org/sqlite"
-	)
-
-	type Data struct {
-		Int      int64
-		String   *string
-		Bool     *bool
-		Time     time.Time
-		Big      *big.Int
-		URL      *url.URL
-		IntSlice []int32
-		JSON     map[string]any
-	}
-
-	var Schema = structscan.Describe[Data]()
-
-	func main() {
-		db, err := sql.Open("sqlite", ":memory:")
-		if err != nil {
-			panic(err)
-		}
-
-		rows, err := db.Query(`
-			SELECT
-				100 as int
-				, NULL as string
-				, true as bool
-				, '2025-05-01' as time
-				, '300' as big
-				, 'https://example.com/path?query=yes' as url
-				, '400,500,600' as int_slice
-				, '{"hello":"world"}' as json
-		`)
-		if err != nil {
-			panic(err)
-		}
-
-		data, err := structscan.All(rows,
-			Schema["Int"],             // int64
-			Schema["String"],          // *string
-			Schema["Bool"].Required(), // bool
-			Schema["Time"].String(structscan.ParseTime(time.DateOnly, time.UTC)),          // string + time.ParseInLocation
-			Schema["Big"].Bytes(structscan.UnmarshalText()),                               // []byte + encoding.UnmarshalText
-			Schema["URL"].Bytes(structscan.UnmarshalBinary()),                             // []byte + encoding.UnmarshalBinary
-			Schema["IntSlice"].String(structscan.Split(",", structscan.ParseInt(10, 32))), // string + strings.Split + strconv.ParseInt
-			Schema["JSON"].Bytes(structscan.UnmarshalJSON()),                              // []byte + json.Unmarshal
-		)
-		if err != nil {
-			panic(err)
-		}
-
-		fmt.Println(data[0])
-		// {100 <nil> 0x14000098368 2025-05-01 00:00:00 +0000 UTC 300 https://example.com/path?query=yes [400 500 600] map[hello:world]}
-	}
-*/
 package structscan
 
 import (
@@ -88,148 +13,196 @@ import (
 	"time"
 )
 
-// Scanner defines an interface for scanning values from SQL rows into a struct of type T.
-// It returns a destination value for sql.Rows.Scan, a setter to populate the struct, and any error encountered.
 type Scanner[T any] interface {
-	Scan() (any, func(*T) error, error)
+	Scan() (any, func(*T) error)
 }
 
-// ScanFunc is a functional implementation of Scanner.
-// Useful for wrapping inline scan logic without defining a full struct.
-type ScanFunc[T any] func() (any, func(*T) error, error)
+type ScanFunc[T any] func() (any, func(*T) error)
 
-// Scan implements the Scanner interface.
-func (s ScanFunc[T]) Scan() (any, func(*T) error, error) {
+func (s ScanFunc[T]) Scan() (any, func(*T) error) {
 	return s()
 }
 
-// All reads all rows from the given *sql.Rows and populates a slice of T.
-// Each row is scanned using the provided Scanner implementations.
-func All[T any](rows *sql.Rows, scanners ...Scanner[T]) ([]T, error) {
-	dest, set, err := destSet(scanners...)
-	if err != nil {
-		return nil, twoErr(err, rows.Close())
-	}
-
-	var all []T
-
-	for rows.Next() {
-		if err = rows.Scan(dest...); err != nil {
-			return nil, twoErr(err, rows.Close())
-		}
-
-		var t T
-
-		if err = set(&t); err != nil {
-			return nil, twoErr(err, rows.Close())
-		}
-
-		all = append(all, t)
-	}
-
-	return all, twoErr(rows.Err(), rows.Close())
-}
-
-var ErrTooManyRows = errors.New("too many rows")
-
-// One scans a single row from *sql.Rows into a value of type T.
-// Returns an error if there are no rows or more than one.
-func One[T any](rows *sql.Rows, scanners ...Scanner[T]) (T, error) {
-	var one T
-
-	dest, set, err := destSet(scanners...)
-	if err != nil {
-		return one, twoErr(err, rows.Close())
-	}
-
-	if !rows.Next() {
-		return one, twoErr(sql.ErrNoRows, rows.Close())
-	}
-
-	if err = rows.Scan(dest...); err != nil {
-		return one, twoErr(err, rows.Close())
-	}
-
-	if err = set(&one); err != nil {
-		return one, twoErr(err, rows.Close())
-	}
-
-	if rows.Next() {
-		return one, twoErr(ErrTooManyRows, rows.Close())
-	}
-
-	return one, twoErr(rows.Err(), rows.Close())
-}
-
-// First scans the result of *sql.Row into a value of type T.
-// This is useful for single-row queries like `QueryRowContext`.
-// Returns an error if scanning or assignment fails.
-func First[T any](row *sql.Row, scanners ...Scanner[T]) (T, error) {
-	var first T
-
-	dest, set, err := destSet(scanners...)
-	if err != nil {
-		return first, err
-	}
-
-	if err = row.Scan(dest...); err != nil {
-		return first, err
-	}
-
-	if err = set(&first); err != nil {
-		return first, err
-	}
-
-	return first, nil
-}
-
-func destSet[T any](scanners ...Scanner[T]) ([]any, func(*T) error, error) {
+func Map[T any](scanners ...Scanner[T]) Mapper[T] {
 	if len(scanners) == 0 {
-		scanners = []Scanner[T]{
-			ScanFunc[T](func() (any, func(*T) error, error) {
-				var src *T
+		var src T
 
-				return &src, func(t *T) error {
-					if src == nil {
-						return nil
-					}
+		return Mapper[T]{
+			Dest: []any{&src},
+			Set: func(t *T) error {
+				*t = src
 
-					*t = *src
-
-					return nil
-				}, nil
-			}),
+				return nil
+			},
 		}
 	}
 
 	var (
 		values  = make([]any, len(scanners))
 		setters = make([]func(*T) error, len(scanners))
-		err     error
 	)
 
 	for i, s := range scanners {
-		values[i], setters[i], err = s.Scan()
-		if err != nil {
-			return nil, nil, err
-		}
+		values[i], setters[i] = s.Scan()
 	}
 
-	return values, func(t *T) error {
-		for _, s := range setters {
-			if s != nil {
-				if err := s(t); err != nil {
-					return err
+	return Mapper[T]{
+		Dest: values,
+		Set: func(t *T) error {
+			for _, s := range setters {
+				if s != nil {
+					if err := s(t); err != nil {
+						return err
+					}
 				}
 			}
-		}
 
-		return nil
-	}, nil
+			return nil
+		},
+	}
 }
 
-// Describe analyzes the structure of type T using reflection and returns a Schema,
-// which maps field paths to Field objects representing metadata and accessors for each field.
+type Mapper[T any] struct {
+	Dest []any
+	Set  func(*T) error
+}
+
+func (m Mapper[T]) All(rows *sql.Rows) ([]T, error) {
+	var all []T
+
+	for rows.Next() {
+		if err := rows.Scan(m.Dest...); err != nil {
+			return nil, combineErrs(err, rows.Close())
+		}
+
+		var t T
+
+		if err := m.Set(&t); err != nil {
+			return nil, combineErrs(err, rows.Close())
+		}
+
+		all = append(all, t)
+	}
+
+	return all, combineErrs(rows.Err(), rows.Close())
+}
+
+var ErrTooManyRows = errors.New("too many rows")
+
+func (m Mapper[T]) One(rows *sql.Rows) (T, error) {
+	var one T
+
+	if !rows.Next() {
+		return one, combineErrs(sql.ErrNoRows, rows.Close())
+	}
+
+	if err := rows.Scan(m.Dest...); err != nil {
+		return one, combineErrs(err, rows.Close())
+	}
+
+	if err := m.Set(&one); err != nil {
+		return one, combineErrs(err, rows.Close())
+	}
+
+	if rows.Next() {
+		return one, combineErrs(ErrTooManyRows, rows.Close())
+	}
+
+	return one, combineErrs(rows.Err(), rows.Close())
+}
+
+func (m Mapper[T]) Row(row *sql.Row) (T, error) {
+	var first T
+
+	if err := row.Scan(m.Dest...); err != nil {
+		return first, err
+	}
+
+	if err := m.Set(&first); err != nil {
+		return first, err
+	}
+
+	return first, nil
+}
+
+func MustScan[T any](accessor Accessor[T], converters ...Converter) Scanner[T] {
+	scanner, err := Scan(accessor, converters...)
+	if err != nil {
+		panic(err)
+	}
+
+	return scanner
+}
+
+func Scan[T any](accessor Accessor[T], converters ...Converter) (Scanner[T], error) {
+	srcType, convert, err := Chain(converters...)(accessor.Type())
+	if err != nil {
+		return nil, err
+	}
+
+	return ScanFunc[T](func() (any, func(*T) error) {
+		src := reflect.New(srcType)
+
+		return src.Interface(), func(t *T) error {
+			dst, err := convert(src.Elem())
+			if err != nil {
+				return err
+			}
+
+			if !dst.IsValid() {
+				return nil
+			}
+
+			accessor.Access(t).Set(dst)
+
+			return nil
+		}
+	}), nil
+}
+
+type Accessor[T any] interface {
+	Type() reflect.Type
+	Access(t *T) reflect.Value
+}
+
+type Schema[T any] map[string]Field[T]
+
+func (s Schema[T]) MustField(path string) Field[T] {
+	f, err := s.Field(path)
+	if err != nil {
+		panic(err)
+	}
+
+	return f
+}
+
+func (s Schema[T]) Field(path string) (Field[T], error) {
+	f, ok := s[path]
+	if !ok {
+		return Field[T]{}, fmt.Errorf("field not found: %s", path)
+	}
+
+	return f, nil
+}
+
+func (s Schema[T]) Type() reflect.Type {
+	f, err := s.Field("")
+	if err != nil {
+		panic(err)
+	}
+
+	return f.Type()
+}
+
+func (s Schema[T]) Access(t *T) reflect.Value {
+	f, err := s.Field("")
+	if err != nil {
+		panic(err)
+	}
+
+	return f.Access(t)
+}
+
 func Describe[T any]() Schema[T] {
 	s := Schema[T]{}
 
@@ -243,14 +216,11 @@ func fillSchema[T any](s Schema[T], indices []int, path string, t reflect.Type) 
 		t = t.Elem()
 
 		indices = append(indices, -1)
-
-		continue
 	}
 
-	s[path] = &Field[T]{
-		typ:      t,
-		indices:  indices,
-		required: !slices.Contains(indices, -1),
+	s[path] = Field[T]{
+		dstType: t,
+		indices: indices,
 	}
 
 	if t.Kind() != reflect.Struct {
@@ -274,61 +244,12 @@ func fillSchema[T any](s Schema[T], indices []int, path string, t reflect.Type) 
 	}
 }
 
-// Schema maps field names (including nested paths like "User.Email")
-// to *Field definitions describing how to access and bind those fields.
-type Schema[T any] map[string]*Field[T]
-
-// Field is a helper function for usage in sqlt templates.
-func (s Schema[T]) Field(path string) *Field[T] {
-	f, ok := s[path]
-	if !ok {
-		return nil
-	}
-
-	return f
-}
-
-func (s Schema[T]) Scan() (any, func(t *T) error, error) {
-	if s[""] == nil {
-		return nil, nil, fmt.Errorf("invalid schema: %s", reflect.TypeFor[T]())
-	}
-
-	return s[""].Scan()
-}
-
-// Field contains metadata about a struct field, including its type, index path in the struct,
-// and whether it is required (i.e., cannot be nil). Used for scanning and binding.
 type Field[T any] struct {
-	typ      reflect.Type
-	indices  []int
-	required bool
+	dstType reflect.Type
+	indices []int
 }
 
-// Optional marks the field as optional (nullable).
-// This affects how nils are treated during scanning.
-// If a SQL value is NULL, the field will remain zero-valued.
-func (f *Field[T]) Optional() *Field[T] {
-	return &Field[T]{
-		typ:      f.typ,
-		indices:  f.indices,
-		required: false,
-	}
-}
-
-// Required marks the field as required (non-nullable).
-// If a SQL value is NULL, the field will be zeroed and scanning will continue,
-// but you may later enforce presence through validation.
-func (f *Field[T]) Required() *Field[T] {
-	return &Field[T]{
-		typ:      f.typ,
-		indices:  f.indices,
-		required: true,
-	}
-}
-
-// Value returns the reflect.Value of the field within the given struct pointer t.
-// It walks through nested fields and pointer layers using the field's index path.
-func (f *Field[T]) Value(t *T) reflect.Value {
+func (f Field[T]) Access(t *T) reflect.Value {
 	dst := reflect.ValueOf(t).Elem()
 
 	for _, idx := range f.indices {
@@ -348,492 +269,681 @@ func (f *Field[T]) Value(t *T) reflect.Value {
 	return dst
 }
 
-// Scan returns a value to be scanned into and a function to apply that value to the field.
-// The behavior differs based on whether the field is marked required.
-func (f *Field[T]) Scan() (any, func(*T) error, error) {
-	if f.required {
-		src := reflect.New(f.typ)
-
-		return src.Interface(), func(t *T) error {
-			f.Value(t).Set(src.Elem())
-
-			return nil
-		}, nil
-	}
-
-	ptr := reflect.New(reflect.PointerTo(f.typ))
-
-	return ptr.Interface(), func(t *T) error {
-		elem := ptr.Elem()
-		if elem.IsNil() {
-			return nil
-		}
-
-		f.Value(t).Set(elem.Elem())
-
-		return nil
-	}, nil
-}
-
-// String binds a field expecting a string value, optionally using decoders to convert or validate input.
-func (f *Field[T]) String(decoders ...Decoder[string]) Scanner[T] {
-	return bind(f, decoders...)
+func (f Field[T]) Type() reflect.Type {
+	return f.dstType
 }
 
 var (
-	rawMessageType = reflect.TypeFor[json.RawMessage]()
-	byteSliceType  = reflect.TypeFor[[]byte]()
+	stringType    = reflect.TypeFor[string]()
+	byteSliceType = reflect.TypeFor[[]byte]()
+	invalid       reflect.Value
 )
 
-// UnmarshalJSON returns a Decoder that unmarshals JSON-encoded []byte into a compatible Go type.
-// Supports json.RawMessage, []byte, or types implementing json.Unmarshaler.
-func UnmarshalJSON() Decoder[[]byte] {
-	return func(dstType reflect.Type) (Assign[[]byte], error) {
-		switch dstType {
-		case rawMessageType, byteSliceType:
-			return func(dst reflect.Value, src []byte) error {
-				if !json.Valid(src) {
-					return fmt.Errorf("unmarshal json: invalid json encoding: %s", string(src))
-				}
+type Converter func(dstType reflect.Type) (reflect.Type, Convert, error)
 
-				dst.SetBytes(src)
+type Convert func(src reflect.Value) (reflect.Value, error)
 
-				return nil
-			}, nil
+func Nullable() Converter {
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		return reflect.PointerTo(dstType), func(src reflect.Value) (reflect.Value, error) {
+			if !src.IsValid() || src.IsNil() {
+				return invalid, nil
+			}
+
+			return src.Elem(), nil
+		}, nil
+	}
+}
+
+func Default(value any) Converter {
+	var (
+		r   = reflect.ValueOf(value)
+		typ = r.Type()
+	)
+
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		conv, err := autoConverter(dstType, typ)
+		if err != nil {
+			return nil, nil, fmt.Errorf("default converter: %w", err)
 		}
 
-		return func(dst reflect.Value, src []byte) error {
-			return json.Unmarshal(src, dst.Addr().Interface())
+		return reflect.PointerTo(dstType), func(src reflect.Value) (reflect.Value, error) {
+			if !src.IsValid() || src.IsNil() {
+				return conv(r)
+			}
+
+			return conv(src.Elem())
+		}, nil
+	}
+}
+
+func UnmarshalJSON() Converter {
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		return byteSliceType, func(src reflect.Value) (reflect.Value, error) {
+			dst := reflect.New(dstType)
+
+			err := json.Unmarshal(src.Bytes(), dst.Interface())
+			if err != nil {
+				return invalid, fmt.Errorf("unmarshal json converter: %w", err)
+			}
+
+			return dst.Elem(), err
 		}, nil
 	}
 }
 
 var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
 
-// UnmarshalText returns a Decoder that uses encoding.TextUnmarshaler to decode byte slices.
-// Useful for types like *big.Int or *time.Duration that support text-based decoding.
-func UnmarshalText() Decoder[[]byte] {
-	return func(dstType reflect.Type) (Assign[[]byte], error) {
-		if reflect.PointerTo(dstType).Implements(textUnmarshalerType) {
-			return func(dst reflect.Value, src []byte) error {
-				i, ok := dst.Addr().Interface().(encoding.TextUnmarshaler)
-				if !ok {
-					return fmt.Errorf("unmarshal text: invalid type: %s", dst.Type())
-				}
-
-				return i.UnmarshalText(src)
-			}, nil
-		}
-
-		return nil, fmt.Errorf("unmarshal text: invalid type %s", dstType)
-	}
+func UnmarshalText() Converter {
+	return convertInterface("unmarshal text", textUnmarshalerType, func(iface any, src []byte) error {
+		return iface.(encoding.TextUnmarshaler).UnmarshalText(src)
+	})
 }
 
 var binaryUnmarshalerType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
 
-// UnmarshalBinary returns a Decoder that uses encoding.BinaryUnmarshaler to decode byte slices.
-func UnmarshalBinary() Decoder[[]byte] {
-	return func(dstType reflect.Type) (Assign[[]byte], error) {
-		if reflect.PointerTo(dstType).Implements(binaryUnmarshalerType) {
-			return func(dst reflect.Value, src []byte) error {
-				i, ok := dst.Addr().Interface().(encoding.BinaryUnmarshaler)
-				if !ok {
-					return fmt.Errorf("unmarshal binary: invalid type: %s", dst.Type())
-				}
-
-				return i.UnmarshalBinary(src)
-			}, nil
-		}
-
-		return nil, fmt.Errorf("unmarshal binary: invalid type %s", dstType)
-	}
+func UnmarshalBinary() Converter {
+	return convertInterface("unmarshal binary", binaryUnmarshalerType, func(iface any, src []byte) error {
+		return iface.(encoding.BinaryUnmarshaler).UnmarshalBinary(src)
+	})
 }
 
-// Time binds a field expecting a time.Time value.
-func (f *Field[T]) Time(decoders ...Decoder[time.Time]) Scanner[T] {
-	return bind(f, decoders...)
-}
+func convertInterface(name string, ifaceType reflect.Type, fn func(any, []byte) error) Converter {
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		deref := dstType.Kind() != reflect.Pointer
 
-// Bytes binds a field expecting a []byte value.
-func (f *Field[T]) Bytes(decoders ...Decoder[[]byte]) Scanner[T] {
-	return bind(f, decoders...)
-}
+		if !dstType.Implements(ifaceType) {
+			dstType = reflect.PointerTo(dstType)
 
-// Int binds a field expecting an int64 value.
-func (f *Field[T]) Int(decoders ...Decoder[int64]) Scanner[T] {
-	return bind(f, decoders...)
-}
-
-// Uint binds a field expecting a uint64 value.
-func (f *Field[T]) Uint(decoders ...Decoder[uint64]) Scanner[T] {
-	return bind(f, decoders...)
-}
-
-// Float binds a field expecting a float64 value.
-func (f *Field[T]) Float(decoders ...Decoder[float64]) Scanner[T] {
-	return bind(f, decoders...)
-}
-
-// Bool binds a field expecting a boolean value.
-func (f *Field[T]) Bool(decoders ...Decoder[bool]) Scanner[T] {
-	return bind(f, decoders...)
-}
-
-var timeType = reflect.TypeFor[time.Time]()
-
-// ParseTime returns a Decoder that parses time strings using the specified layout and location.
-// Useful for scanning string-based date/time formats into time.Time fields.
-func ParseTime(layout string, loc *time.Location) Decoder[string] {
-	return func(dstType reflect.Type) (Assign[string], error) {
-		if dstType == timeType {
-			return func(dst reflect.Value, src string) error {
-				v, err := time.ParseInLocation(layout, src, loc)
-				if err != nil {
-					return err
-				}
-
-				dst.Set(reflect.ValueOf(v))
-
-				return nil
-			}, nil
-		}
-
-		if timeType.ConvertibleTo(dstType) {
-			return func(dst reflect.Value, src string) error {
-				v, err := time.ParseInLocation(layout, src, loc)
-				if err != nil {
-					return err
-				}
-
-				dst.Set(reflect.ValueOf(v).Convert(dstType))
-
-				return nil
-			}, nil
-		}
-
-		return nil, fmt.Errorf("parse time: invalid type %s", dstType)
-	}
-}
-
-// ParseInt returns a Decoder that parses strings into int64 values.
-// The base (e.g. 10) and bit size (e.g. 64) determine valid input formats.
-func ParseInt(base int, bitSize int) Decoder[string] {
-	return func(dstType reflect.Type) (Assign[string], error) {
-		switch dstType.Kind() {
-		default:
-			return nil, fmt.Errorf("parse int: invalid type %s", dstType)
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			return func(dst reflect.Value, src string) error {
-				v, err := strconv.ParseInt(src, base, bitSize)
-				if err != nil {
-					return err
-				}
-
-				dst.SetInt(v)
-
-				return nil
-			}, nil
-		}
-	}
-}
-
-// ParseUint returns a Decoder that parses strings into unsigned integers.
-func ParseUint(base int, bitSize int) Decoder[string] {
-	return func(dstType reflect.Type) (Assign[string], error) {
-		switch dstType.Kind() {
-		default:
-			return nil, fmt.Errorf("parse uint: invalid type %s", dstType)
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			return func(dst reflect.Value, src string) error {
-				v, err := strconv.ParseUint(src, base, bitSize)
-				if err != nil {
-					return err
-				}
-
-				dst.SetUint(v)
-
-				return nil
-			}, nil
-		}
-	}
-}
-
-// ParseFloat returns a Decoder that parses strings into float32 or float64.
-func ParseFloat(bitSize int) Decoder[string] {
-	return func(dstType reflect.Type) (Assign[string], error) {
-		switch dstType.Kind() {
-		default:
-			return nil, fmt.Errorf("parse float: invalid type %s", dstType)
-		case reflect.Float32, reflect.Float64:
-			return func(dst reflect.Value, src string) error {
-				v, err := strconv.ParseFloat(src, bitSize)
-				if err != nil {
-					return err
-				}
-
-				dst.SetFloat(v)
-
-				return nil
-			}, nil
-		}
-	}
-}
-
-// ParseBool returns a Decoder that parses strings into boolean values (true/false).
-func ParseBool() Decoder[string] {
-	return func(dstType reflect.Type) (Assign[string], error) {
-		switch dstType.Kind() {
-		default:
-			return nil, fmt.Errorf("parse bool: invalid type %s", dstType)
-		case reflect.Bool:
-			return func(dst reflect.Value, src string) error {
-				v, err := strconv.ParseBool(src)
-				if err != nil {
-					return err
-				}
-
-				dst.SetBool(v)
-
-				return nil
-			}, nil
-		}
-	}
-}
-
-// ParseComplex returns a Decoder that parses complex numbers from string input.
-// Supports complex64 and complex128 depending on bitSize.
-func ParseComplex(bitSize int) Decoder[string] {
-	return func(dstType reflect.Type) (Assign[string], error) {
-		switch dstType.Kind() {
-		default:
-			return nil, fmt.Errorf("parse complex: invalid type %s", dstType)
-		case reflect.Complex64, reflect.Complex128:
-			return func(dst reflect.Value, src string) error {
-				v, err := strconv.ParseComplex(src, bitSize)
-				if err != nil {
-					return err
-				}
-
-				dst.SetComplex(v)
-
-				return nil
-			}, nil
-		}
-	}
-}
-
-// Decoder defines a function that takes a destination type and returns
-// an Assign function to convert and assign a decoded value.
-type Decoder[V any] func(dstType reflect.Type) (Assign[V], error)
-
-func noAssign[V any](dstType reflect.Type) (Assign[V], error) {
-	typ := reflect.TypeFor[V]()
-
-	switch typ.Kind() {
-	case reflect.String:
-		if dstType.Kind() == reflect.String {
-			return func(dst reflect.Value, src V) error {
-				dst.SetString(any(src).(string))
-
-				return nil
-			}, nil
-		}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		switch dstType.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			return func(dst reflect.Value, src V) error {
-				dst.SetInt(any(src).(int64))
-
-				return nil
-			}, nil
-		}
-	case reflect.Bool:
-		if dstType.Kind() == reflect.Bool {
-			return func(dst reflect.Value, src V) error {
-				dst.SetBool(any(src).(bool))
-
-				return nil
-			}, nil
-		}
-	case reflect.Float32, reflect.Float64:
-		switch dstType.Kind() {
-		case reflect.Float32, reflect.Float64:
-			return func(dst reflect.Value, src V) error {
-				dst.SetFloat(any(src).(float64))
-
-				return nil
-			}, nil
-		}
-	}
-
-	if dstType == typ {
-		return func(dst reflect.Value, src V) error {
-			dst.SetBytes(any(src).([]byte))
-
-			return nil
-		}, nil
-	}
-
-	if typ.ConvertibleTo(dstType) {
-		return func(dst reflect.Value, src V) error {
-			dst.Set(reflect.ValueOf(src).Convert(dstType))
-
-			return nil
-		}, nil
-	}
-
-	return nil, fmt.Errorf("cannot convert %s to %s", typ, dstType)
-}
-
-// Assign defines a function that sets a decoded value of type V into a reflect.Value.
-// Used to abstract away reflection logic in field assignment.
-type Assign[V any] func(dst reflect.Value, src V) error
-
-func bind[V, T any](field *Field[T], decoders ...Decoder[V]) Scanner[T] {
-	if len(decoders) == 0 {
-		assign, err := noAssign[V](field.typ)
-		if err != nil {
-			return errorScanner[T]{
-				err: err,
+			if !dstType.Implements(ifaceType) {
+				return nil, nil, fmt.Errorf("%s converter: %s does not implement %s", name, dstType, ifaceType)
 			}
 		}
 
-		return assignScanner[V, T]{
-			field:  field,
-			assign: assign,
-		}
-	}
+		return byteSliceType, func(src reflect.Value) (reflect.Value, error) {
+			ptr := reflect.New(dstType.Elem())
+			if err := fn(ptr.Interface(), src.Bytes()); err != nil {
+				return invalid, fmt.Errorf("%s converter: %w", name, err)
+			}
 
-	assign, err := decoders[0](field.typ)
-	if err != nil {
-		return errorScanner[T]{
-			err: err,
-		}
-	}
+			if deref {
+				return ptr.Elem(), nil
+			}
 
-	return assignScanner[V, T]{
-		field:  field,
-		assign: assign,
-	}
-}
-
-type errorScanner[T any] struct {
-	err error
-}
-
-func (s errorScanner[T]) Scan() (any, func(t *T) error, error) {
-	return nil, nil, s.err
-}
-
-type assignScanner[V, T any] struct {
-	field  *Field[T]
-	assign Assign[V]
-}
-
-func (s assignScanner[V, T]) Scan() (any, func(t *T) error, error) {
-	if s.field.required {
-		var src V
-
-		return &src, func(t *T) error {
-			return s.assign(s.field.Value(t), src)
+			return ptr, nil
 		}, nil
 	}
+}
 
-	var src *V
+func ParseTime(layout string) Converter {
+	return StringFunc("parse time", func(src string) (time.Time, error) {
+		return time.Parse(layout, src)
+	})
+}
 
-	return &src, func(t *T) error {
-		if src == nil {
-			return nil
+func ParseTimeInLocation(layout string, location *time.Location) Converter {
+	return StringFunc("parse time in location", func(src string) (time.Time, error) {
+		return time.ParseInLocation(layout, src, location)
+	})
+}
+
+func Atoi() Converter {
+	return StringFunc("atoi", strconv.Atoi)
+}
+
+func ParseInt(base int, bitSize int) Converter {
+	return StringFunc("parse int", func(src string) (int64, error) {
+		return strconv.ParseInt(src, base, bitSize)
+	})
+}
+
+func ParseUint(base int, bitSize int) Converter {
+	return StringFunc("parse uint", func(src string) (uint64, error) {
+		return strconv.ParseUint(src, base, bitSize)
+	})
+}
+
+func ParseFloat(bitSize int) Converter {
+	return StringFunc("parse float", func(src string) (float64, error) {
+		return strconv.ParseFloat(src, bitSize)
+	})
+}
+
+func ParseBool() Converter {
+	return StringFunc("parse bool", strconv.ParseBool)
+}
+
+func ParseComplex(bitSize int) Converter {
+	return StringFunc("parse complex", func(src string) (complex128, error) {
+		return strconv.ParseComplex(src, bitSize)
+	})
+}
+
+func StringFunc[D any](name string, fn func(src string) (D, error)) Converter {
+	typ := reflect.TypeFor[D]()
+
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		conv, err := autoConverter(dstType, typ)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s converter: %w", name, err)
 		}
 
-		return s.assign(s.field.Value(t), *src)
+		return stringType, func(src reflect.Value) (reflect.Value, error) {
+			v, err := fn(src.String())
+			if err != nil {
+				return invalid, fmt.Errorf("%s converter: %w", name, err)
+			}
+
+			return conv(reflect.ValueOf(v))
+		}, nil
+	}
+}
+
+func Trim(cutset string) Converter {
+	return StringFunc("trim", func(str string) (string, error) {
+		return strings.Trim(str, cutset), nil
+	})
+}
+
+func TrimPrefix(prefix string) Converter {
+	return StringFunc("trimprefix", func(str string) (string, error) {
+		return strings.TrimPrefix(str, prefix), nil
+	})
+}
+
+func TrimSuffix(suffix string) Converter {
+	return StringFunc("trimsuffix", func(str string) (string, error) {
+		return strings.TrimSuffix(str, suffix), nil
+	})
+}
+
+func Contains(substr string) Converter {
+	return StringFunc("contains", func(str string) (bool, error) {
+		return strings.Contains(str, substr), nil
+	})
+}
+
+func ContainsAny(chars string) Converter {
+	return StringFunc("containsany", func(str string) (bool, error) {
+		return strings.ContainsAny(str, chars), nil
+	})
+}
+
+func HasPrefix(prefix string) Converter {
+	return StringFunc("hasprefix", func(str string) (bool, error) {
+		return strings.HasPrefix(str, prefix), nil
+	})
+}
+
+func HasSuffix(suffix string) Converter {
+	return StringFunc("hassuffix", func(str string) (bool, error) {
+		return strings.HasSuffix(str, suffix), nil
+	})
+}
+
+func EqualFold(substr string) Converter {
+	return StringFunc("equalfold", func(str string) (bool, error) {
+		return strings.EqualFold(str, substr), nil
+	})
+}
+
+func Index(substr string) Converter {
+	return StringFunc("index", func(str string) (int, error) {
+		return strings.Index(str, substr), nil
+	})
+}
+
+func Count(substr string) Converter {
+	return StringFunc("count", func(str string) (int, error) {
+		return strings.Count(str, substr), nil
+	})
+}
+
+func ToLower() Converter {
+	return StringFunc("tolower", func(str string) (string, error) {
+		return strings.ToLower(str), nil
+	})
+}
+
+func ToUpper() Converter {
+	return StringFunc("toupper", func(str string) (string, error) {
+		return strings.ToUpper(str), nil
+	})
+}
+
+func Chain(converters ...Converter) Converter {
+	switch len(converters) {
+	case 0:
+		return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+			return dstType, func(src reflect.Value) (reflect.Value, error) {
+				return src, nil
+			}, nil
+		}
+	case 1:
+		return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+			return converters[0](dstType)
+		}
+	}
+
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		var (
+			convert = make([]Convert, len(converters))
+			sType   = dstType
+			err     error
+		)
+
+		for i, d := range slices.Backward(converters) {
+			sType, convert[i], err = d(sType)
+			if err != nil {
+				return nil, nil, fmt.Errorf("chain converter: %w", err)
+			}
+		}
+
+		return sType, func(src reflect.Value) (reflect.Value, error) {
+			var err error
+
+			for _, a := range convert {
+				if !src.IsValid() {
+					return invalid, nil
+				}
+
+				src, err = a(src)
+				if err != nil {
+					return invalid, fmt.Errorf("chain converter: %w", err)
+				}
+			}
+
+			return src, nil
+		}, nil
+	}
+}
+
+func MustOneOf(values ...any) Converter {
+	d, err := OneOf(values...)
+	if err != nil {
+		panic(err)
+	}
+
+	return d
+}
+
+func OneOf(values ...any) (Converter, error) {
+	var valueType reflect.Type
+
+	for i, v := range values {
+		r := reflect.ValueOf(v)
+
+		if i == 0 {
+			valueType = r.Type()
+		} else if r.Type() != valueType {
+			return nil, fmt.Errorf("oneof converter: invalid value: %s", v)
+		}
+	}
+
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		conv, err := autoConverter(dstType, valueType)
+		if err != nil {
+			return nil, nil, fmt.Errorf("oneof converter: %w", err)
+		}
+
+		return valueType, func(src reflect.Value) (reflect.Value, error) {
+			if !slices.ContainsFunc(values, func(each any) bool { return reflect.DeepEqual(each, src.Interface()) }) {
+				return invalid, fmt.Errorf("oneof converter: invalid value: %v", src)
+			}
+
+			return conv(src)
+		}, nil
 	}, nil
 }
 
-var stringSliceType = reflect.TypeFor[[]string]()
-
-// Split returns a Decoder that splits a string by the given separator and applies another decoder
-// to each split value. Useful for scanning into slices of strings, ints, etc.
-func Split(sep string, decoders ...Decoder[string]) Decoder[string] {
-	var decoder Decoder[string]
-
-	if len(decoders) > 0 {
-		decoder = decoders[0]
-	} else {
-		decoder = func(dstType reflect.Type) (Assign[string], error) {
-			switch dstType.Kind() {
-			default:
-				return nil, fmt.Errorf("string: invalid type %s", dstType)
-			case reflect.String:
-				return func(dst reflect.Value, src string) error {
-					dst.SetString(src)
-
-					return nil
-				}, nil
-			}
-		}
+func MustEnum(pairs ...any) Converter {
+	d, err := Enum(pairs...)
+	if err != nil {
+		panic(err)
 	}
 
-	return func(dstType reflect.Type) (Assign[string], error) {
-		if dstType == stringSliceType {
-			return func(dst reflect.Value, src string) error {
-				if src == "" {
-					return nil
+	return d
+}
+
+func Enum(pairs ...any) (Converter, error) {
+	if len(pairs)%2 != 0 {
+		return nil, errors.New("enum converter: invalid number of arguments, must be even")
+	}
+
+	var (
+		keyType, valueType reflect.Type
+		mapping            = map[any]reflect.Value{}
+	)
+
+	for pair := range slices.Chunk(pairs, 2) {
+		k, v := reflect.ValueOf(pair[0]), reflect.ValueOf(pair[1])
+
+		if !k.IsValid() || !v.IsValid() {
+			return nil, fmt.Errorf("enum converter: invalid pair: %v", pair)
+		}
+
+		if keyType == nil {
+			keyType = k.Type()
+
+			if !keyType.Comparable() {
+				return nil, fmt.Errorf("enum converter: key type is not comparable: %s", keyType)
+			}
+
+			valueType = v.Type()
+		} else if k.Type() != keyType || v.Type() != valueType {
+			return nil, fmt.Errorf("enum converter: invalid pair: %v", pair)
+		}
+
+		mapping[pair[0]] = v
+	}
+
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		conv, err := autoConverter(dstType, valueType)
+		if err != nil {
+			return nil, nil, fmt.Errorf("enum converter: %w", err)
+		}
+
+		return keyType, func(src reflect.Value) (reflect.Value, error) {
+			value, ok := mapping[src.Interface()]
+			if !ok {
+				return invalid, fmt.Errorf("enum converter: invalid enum: %s", src)
+			}
+
+			return conv(value)
+		}, nil
+	}, nil
+}
+
+func Cut(sep string, converters ...Converter) Converter {
+	converter := Chain(converters...)
+
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		kind := dstType.Kind()
+
+		switch kind {
+		case reflect.Slice:
+			srcType, convert, err := converter(dstType.Elem())
+			if err != nil {
+				return nil, nil, fmt.Errorf("cut converter: %w", err)
+			}
+
+			assign, err := assigner(srcType, stringType)
+			if err != nil {
+				return nil, nil, fmt.Errorf("cut converter: %w", err)
+			}
+
+			return stringType, func(src reflect.Value) (reflect.Value, error) {
+				var (
+					before, after, _ = strings.Cut(src.String(), sep)
+					dst              = reflect.MakeSlice(dstType, 2, 2)
+					val              reflect.Value
+					err              error
+				)
+
+				val, err = convert(reflect.ValueOf(before))
+				if err != nil {
+					return invalid, fmt.Errorf("cut converter: %w", err)
 				}
 
-				dst.Set(reflect.ValueOf(strings.Split(src, sep)))
+				if err = assign(dst.Index(0), val); err != nil {
+					return invalid, err
+				}
 
-				return nil
+				val, err = convert(reflect.ValueOf(after))
+				if err != nil {
+					return invalid, fmt.Errorf("cut converter: %w", err)
+				}
+
+				if err = assign(dst.Index(1), val); err != nil {
+					return invalid, err
+				}
+
+				return dst, nil
 			}, nil
+		case reflect.Array:
+			if dstType.Len() < 2 {
+				return nil, nil, fmt.Errorf("cut converter: invalid type: %s", dstType)
+			}
+
+			srcType, convert, err := converter(dstType.Elem())
+			if err != nil {
+				return nil, nil, fmt.Errorf("cut converter: %w", err)
+			}
+
+			assign, err := assigner(srcType, stringType)
+			if err != nil {
+				return nil, nil, fmt.Errorf("cut converter: %w", err)
+			}
+
+			return stringType, func(src reflect.Value) (reflect.Value, error) {
+				var (
+					before, after, _ = strings.Cut(src.String(), sep)
+					dst              = reflect.New(dstType).Elem()
+					val              reflect.Value
+					err              error
+				)
+
+				val, err = convert(reflect.ValueOf(before))
+				if err != nil {
+					return invalid, fmt.Errorf("cut converter: %w", err)
+				}
+
+				if err = assign(dst.Index(0), val); err != nil {
+					return invalid, err
+				}
+
+				val, err = convert(reflect.ValueOf(after))
+				if err != nil {
+					return invalid, fmt.Errorf("cut converter: %w", err)
+				}
+
+				if err = assign(dst.Index(1), val); err != nil {
+					return invalid, err
+				}
+
+				return dst, nil
+			}, nil
+		default:
+			return nil, nil, fmt.Errorf("split converter: invalid dst type: %s", dstType)
+		}
+	}
+}
+
+func Split(sep string, converters ...Converter) Converter {
+	converter := Chain(converters...)
+
+	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
+		kind := dstType.Kind()
+
+		switch kind {
+		case reflect.Slice:
+			srcType, convert, err := converter(dstType.Elem())
+			if err != nil {
+				return nil, nil, fmt.Errorf("split converter: %w", err)
+			}
+
+			assign, err := assigner(srcType, stringType)
+			if err != nil {
+				return nil, nil, fmt.Errorf("split converter: %w", err)
+			}
+
+			return stringType, func(src reflect.Value) (reflect.Value, error) {
+				var (
+					split = strings.Split(src.String(), sep)
+					dst   = reflect.MakeSlice(dstType, len(split), len(split))
+					val   reflect.Value
+					err   error
+				)
+
+				for i, each := range split {
+					val, err = convert(reflect.ValueOf(each))
+					if err != nil {
+						return invalid, fmt.Errorf("split converter: %w", err)
+					}
+
+					if err = assign(dst.Index(i), val); err != nil {
+						return invalid, fmt.Errorf("split converter: %w", err)
+					}
+				}
+
+				return dst, nil
+			}, nil
+		case reflect.Array:
+			srcType, convert, err := converter(dstType.Elem())
+			if err != nil {
+				return nil, nil, fmt.Errorf("split converter: %w", err)
+			}
+
+			assign, err := assigner(srcType, stringType)
+			if err != nil {
+				return nil, nil, fmt.Errorf("split converter: %w", err)
+			}
+
+			return stringType, func(src reflect.Value) (reflect.Value, error) {
+				var (
+					split = strings.Split(src.String(), sep)
+					dst   = reflect.New(dstType).Elem()
+					val   reflect.Value
+					err   error
+				)
+
+				if len(split) > dstType.Len() {
+					return invalid, fmt.Errorf("split converter: too many values for %s", dstType)
+				}
+
+				for i, each := range split {
+					val, err = convert(reflect.ValueOf(each))
+					if err != nil {
+						return invalid, fmt.Errorf("split converter: %w", err)
+					}
+
+					if err = assign(dst.Index(i), val); err != nil {
+						return invalid, fmt.Errorf("split converter: %w", err)
+					}
+				}
+
+				return dst, nil
+			}, nil
+		default:
+			return nil, nil, fmt.Errorf("split converter: invalid dst type: %s", dstType)
+		}
+	}
+}
+
+func assigner(dstType, srcType reflect.Type) (func(dst, src reflect.Value) error, error) {
+	conv, err := autoConverter(dstType, srcType)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(dst, src reflect.Value) error {
+		v, err := conv(src)
+		if err != nil {
+			return err
 		}
 
-		if dstType.Kind() != reflect.Slice {
-			return nil, fmt.Errorf("split: invalid type %s", dstType)
+		if !v.IsValid() {
+			return nil
 		}
 
-		var indirections int
+		dst.Set(v)
 
-		elem := dstType.Elem()
-		for elem.Kind() == reflect.Pointer {
-			elem = elem.Elem()
+		return nil
+	}, nil
+}
 
-			indirections++
+func derefType(t reflect.Type) (reflect.Type, int) {
+	var levels int
 
-			continue
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+		levels++
+	}
+
+	return t, levels
+}
+
+func derefValue(v reflect.Value, levels int) reflect.Value {
+	for range levels {
+		if !v.IsValid() || v.Kind() != reflect.Pointer {
+			return invalid
 		}
 
-		apply, err := decoder(elem)
+		v = v.Elem()
+	}
+
+	return v
+}
+
+func refValue(v reflect.Value, levels int) reflect.Value {
+	for range levels {
+		if !v.IsValid() {
+			return invalid
+		}
+
+		ptr := reflect.New(v.Type())
+		ptr.Elem().Set(v)
+		v = ptr
+	}
+
+	return v
+}
+
+func autoConverter(dstType, srcType reflect.Type) (Convert, error) {
+	if srcType.AssignableTo(dstType) {
+		return func(f reflect.Value) (reflect.Value, error) {
+			return f, nil
+		}, nil
+	}
+
+	if srcType.ConvertibleTo(dstType) {
+		return func(f reflect.Value) (reflect.Value, error) {
+			return f.Convert(dstType), nil
+		}, nil
+	}
+
+	if srcType.Kind() == reflect.Pointer {
+		srcType, levels := derefType(srcType)
+
+		convert, err := autoConverter(dstType, srcType)
 		if err != nil {
 			return nil, err
 		}
 
-		return func(dst reflect.Value, src string) error {
-			split := strings.Split(src, sep)
-
-			dst.Set(reflect.MakeSlice(dstType, len(split), len(split)))
-
-			for i, val := range split {
-				index := dst.Index(i)
-
-				for range indirections {
-					if index.IsNil() {
-						index.Set(reflect.New(index.Type().Elem()))
-					}
-
-					index = index.Elem()
-				}
-
-				if err = apply(index, val); err != nil {
-					return err
-				}
+		return func(src reflect.Value) (reflect.Value, error) {
+			src = derefValue(src, levels)
+			if !src.IsValid() {
+				return invalid, nil
 			}
 
-			return nil
+			return convert(src)
 		}, nil
 	}
+
+	if dstType.Kind() == reflect.Pointer {
+		elem, levels := derefType(dstType)
+
+		conv, err := autoConverter(elem, srcType)
+		if err != nil {
+			return nil, err
+		}
+
+		return func(src reflect.Value) (reflect.Value, error) {
+			var err error
+
+			src, err = conv(src)
+			if err != nil {
+				return invalid, err
+			}
+
+			return refValue(src, levels), nil
+		}, nil
+	}
+
+	return nil, fmt.Errorf("value of type %s cannot be converted to type %s", srcType, dstType)
 }
 
-func twoErr(err1, err2 error) error {
+func combineErrs(err1, err2 error) error {
 	if err1 == nil {
 		return err2
 	}
