@@ -125,46 +125,6 @@ func (m Mapper[T]) Row(row *sql.Row) (T, error) {
 	return first, nil
 }
 
-func MustScan[T any](accessor Accessor[T], converters ...Converter) Scanner[T] {
-	scanner, err := Scan(accessor, converters...)
-	if err != nil {
-		panic(err)
-	}
-
-	return scanner
-}
-
-func Scan[T any](accessor Accessor[T], converters ...Converter) (Scanner[T], error) {
-	srcType, convert, err := Chain(converters...)(accessor.Type())
-	if err != nil {
-		return nil, err
-	}
-
-	return ScanFunc[T](func() (any, func(*T) error) {
-		src := reflect.New(srcType)
-
-		return src.Interface(), func(t *T) error {
-			dst, err := convert(src.Elem())
-			if err != nil {
-				return err
-			}
-
-			if !dst.IsValid() {
-				return nil
-			}
-
-			accessor.Access(t).Set(dst)
-
-			return nil
-		}
-	}), nil
-}
-
-type Accessor[T any] interface {
-	Type() reflect.Type
-	Access(t *T) reflect.Value
-}
-
 type Schema[T any] map[string]Field[T]
 
 func (s Schema[T]) MustField(path string) Field[T] {
@@ -185,22 +145,17 @@ func (s Schema[T]) Field(path string) (Field[T], error) {
 	return f, nil
 }
 
-func (s Schema[T]) Type() reflect.Type {
-	f, err := s.Field("")
+func (s Schema[T]) Scan() (any, func(*T) error) {
+	field, err := s.Field("")
 	if err != nil {
-		panic(err)
+		var ignore any
+
+		return []any{ignore}, func(t *T) error {
+			return err
+		}
 	}
 
-	return f.Type()
-}
-
-func (s Schema[T]) Access(t *T) reflect.Value {
-	f, err := s.Field("")
-	if err != nil {
-		panic(err)
-	}
-
-	return f.Access(t)
+	return field.Scan()
 }
 
 func Describe[T any]() Schema[T] {
@@ -271,6 +226,67 @@ func (f Field[T]) Access(t *T) reflect.Value {
 
 func (f Field[T]) Type() reflect.Type {
 	return f.dstType
+}
+
+func (f Field[T]) MustConvert(converter Converter) Scanner[T] {
+	s, err := f.Convert(converter)
+	if err != nil {
+		panic(err)
+	}
+
+	return s
+}
+
+func (f Field[T]) Convert(converter Converter) (Scanner[T], error) {
+	srcType, convert, err := converter(f.dstType)
+	if err != nil {
+		return nil, err
+	}
+
+	return convertedField[T]{
+		field:   f,
+		srcType: srcType,
+		convert: convert,
+	}, nil
+}
+
+func (f Field[T]) Scan() (any, func(*T) error) {
+	src := reflect.New(f.dstType)
+
+	return src.Interface(), func(t *T) error {
+		if !src.IsValid() {
+			return nil
+		}
+
+		f.Access(t).Set(src.Elem())
+
+		return nil
+	}
+}
+
+type convertedField[T any] struct {
+	field   Field[T]
+	srcType reflect.Type
+	convert Convert
+}
+
+func (c convertedField[T]) Scan() (any, func(*T) error) {
+	src := reflect.New(c.srcType)
+
+	return src.Interface(), func(t *T) error {
+		dst, err := c.convert(src.Elem())
+		if err != nil {
+			return err
+		}
+
+		if !dst.IsValid() {
+			return nil
+		}
+
+		c.field.Access(t).Set(dst)
+
+		return nil
+	}
 }
 
 var (

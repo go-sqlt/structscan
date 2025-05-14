@@ -58,22 +58,22 @@ type Data struct {
 var (
 	schema = structscan.Describe[Data]()
 	mapper = structscan.Map(
-		structscan.MustScan(schema["Int"], structscan.MustOneOf(100, 200, 300)),
-		structscan.MustScan(schema["String"], structscan.Default("default")),
-		structscan.MustScan(schema["Bool"]),
-		structscan.MustScan(schema["Time"], structscan.ParseTime(time.DateOnly)),
-		structscan.MustScan(schema["Big"], structscan.UnmarshalText()),
-		structscan.MustScan(schema["URL"], structscan.UnmarshalBinary()),
-		structscan.MustScan(schema["SliceSliceInt"],
+		schema["Int"].MustConvert(structscan.MustOneOf(100, 200, 300)),
+		schema["String"].MustConvert(structscan.Default("default")),
+		schema["Bool"],
+		schema["Time"].MustConvert(structscan.ParseTime(time.DateOnly)),
+		schema["Big"].MustConvert(structscan.UnmarshalText()),
+		schema["URL"].MustConvert(structscan.UnmarshalBinary()),
+		schema["SliceSliceInt"].MustConvert(
 			structscan.Cut(",",
 				structscan.Split("-",
 					structscan.ParseInt(10, 64),
 				),
 			),
 		),
-		structscan.MustScan(schema["JSON"], structscan.UnmarshalJSON()),
-		structscan.MustScan(schema["Enum"], structscan.MustEnum(InvalidString, Invalid, ActiveString, Active, InactiveString, Inactive)),
-		structscan.MustScan(schema["EnumSlice"],
+		schema["JSON"].MustConvert(structscan.UnmarshalJSON()),
+		schema["Enum"].MustConvert(structscan.MustEnum(InvalidString, Invalid, ActiveString, Active, InactiveString, Inactive)),
+		schema["EnumSlice"].MustConvert(
 			structscan.Split(",",
 				structscan.Atoi(),
 				structscan.MustEnum(Invalid, InvalidString, Active, ActiveString, Inactive, InactiveString),

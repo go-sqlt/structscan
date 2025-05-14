@@ -19,31 +19,33 @@ type MyTime time.Time
 type MyString string
 
 type Sample struct {
-	Int     int64
-	String  *string
-	Bool    bool
-	Time    time.Time
-	MyTime  MyTime
-	Big     *big.Int
-	URL     *url.URL
-	Slice   []*string
-	JSON    map[string]any
-	RawJSON json.RawMessage
+	Int      int64
+	String   *string
+	Bool     bool
+	Time     time.Time
+	MyTime   MyTime
+	Big      *big.Int
+	URL      *url.URL
+	Slice    []*string
+	JSON     map[string]any
+	RawJSON  json.RawMessage
+	IntField int32
 }
 
 var (
 	schema       = structscan.Describe[Sample]()
 	sampleMapper = structscan.Map(
-		structscan.MustScan(schema.MustField("Int"), structscan.Default(100)),
-		structscan.MustScan(schema["String"], structscan.Nullable()),
-		structscan.MustScan(schema["Bool"], structscan.ParseBool()),
-		structscan.MustScan(schema["Time"], structscan.ParseTime(time.DateOnly)),
-		structscan.MustScan(schema["MyTime"], structscan.ParseTimeInLocation(time.RFC3339Nano, time.UTC)),
-		structscan.MustScan(schema["Big"], structscan.UnmarshalText()),
-		structscan.MustScan(schema["URL"], structscan.UnmarshalBinary()),
-		structscan.MustScan(schema["Slice"], structscan.Split(",")),
-		structscan.MustScan(schema["JSON"], structscan.UnmarshalJSON()),
-		structscan.MustScan(schema["RawJSON"], structscan.UnmarshalJSON()),
+		schema.MustField("Int").MustConvert(structscan.Default(100)),
+		schema["String"].MustConvert(structscan.Nullable()),
+		schema["Bool"].MustConvert(structscan.ParseBool()),
+		schema["Time"].MustConvert(structscan.ParseTime(time.DateOnly)),
+		schema["MyTime"].MustConvert(structscan.ParseTimeInLocation(time.RFC3339Nano, time.UTC)),
+		schema["Big"].MustConvert(structscan.UnmarshalText()),
+		schema["URL"].MustConvert(structscan.UnmarshalBinary()),
+		schema["Slice"].MustConvert(structscan.Split(",")),
+		schema["JSON"].MustConvert(structscan.UnmarshalJSON()),
+		schema["RawJSON"].MustConvert(structscan.UnmarshalJSON()),
+		schema["IntField"],
 	)
 )
 
@@ -65,7 +67,8 @@ func TestSample(t *testing.T) {
 			url_val TEXT,
 			ints_val TEXT,
 			json_val TEXT,
-			raw_json_val BLOB
+			raw_json_val BLOB,
+			int_field INTEGER
 		)
 	`)
 	if err != nil {
@@ -74,7 +77,7 @@ func TestSample(t *testing.T) {
 
 	_, err = db.Exec(`
 		INSERT INTO sample VALUES
-		(1, 'test', 't', '2025-05-01', '2025-05-01', '12345678901234567890', 'https://example.com/test?q=1', '10,20,30', '{"a": 1}', '{"a": 1}')
+		(1, 'test', 't', '2025-05-01', '2025-05-01', '12345678901234567890', 'https://example.com/test?q=1', '10,20,30', '{"a": 1}', '{"a": 1}', 123)
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -91,8 +94,9 @@ func TestSample(t *testing.T) {
 		Slice: []*string{
 			ptr("10"), ptr("20"), ptr("30"),
 		},
-		JSON:    map[string]any{"a": float64(1)},
-		RawJSON: []byte(`{"a":1}`),
+		JSON:     map[string]any{"a": float64(1)},
+		RawJSON:  []byte(`{"a":1}`),
+		IntField: 123,
 	}
 
 	tests := []struct {
