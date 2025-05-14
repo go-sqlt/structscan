@@ -17,12 +17,6 @@ type Scanner[T any] interface {
 	Scan() (any, func(*T) error)
 }
 
-type ScanFunc[T any] func() (any, func(*T) error)
-
-func (s ScanFunc[T]) Scan() (any, func(*T) error) {
-	return s()
-}
-
 func Map[T any](scanners ...Scanner[T]) Mapper[T] {
 	if len(scanners) == 0 {
 		var src T
@@ -174,7 +168,7 @@ func fillSchema[T any](s Schema[T], indices []int, path string, t reflect.Type) 
 	}
 
 	s[path] = Field[T]{
-		dstType: t,
+		typ:     t,
 		indices: indices,
 	}
 
@@ -200,11 +194,11 @@ func fillSchema[T any](s Schema[T], indices []int, path string, t reflect.Type) 
 }
 
 type Field[T any] struct {
-	dstType reflect.Type
+	typ     reflect.Type
 	indices []int
 }
 
-func (f Field[T]) Access(t *T) reflect.Value {
+func (f Field[T]) access(t *T) reflect.Value {
 	dst := reflect.ValueOf(t).Elem()
 
 	for _, idx := range f.indices {
@@ -224,10 +218,6 @@ func (f Field[T]) Access(t *T) reflect.Value {
 	return dst
 }
 
-func (f Field[T]) Type() reflect.Type {
-	return f.dstType
-}
-
 func (f Field[T]) MustConvert(converter Converter) Scanner[T] {
 	s, err := f.Convert(converter)
 	if err != nil {
@@ -238,7 +228,7 @@ func (f Field[T]) MustConvert(converter Converter) Scanner[T] {
 }
 
 func (f Field[T]) Convert(converter Converter) (Scanner[T], error) {
-	srcType, convert, err := converter(f.dstType)
+	srcType, convert, err := converter(f.typ)
 	if err != nil {
 		return nil, err
 	}
@@ -251,14 +241,14 @@ func (f Field[T]) Convert(converter Converter) (Scanner[T], error) {
 }
 
 func (f Field[T]) Scan() (any, func(*T) error) {
-	src := reflect.New(f.dstType)
+	src := reflect.New(f.typ)
 
 	return src.Interface(), func(t *T) error {
 		if !src.IsValid() {
 			return nil
 		}
 
-		f.Access(t).Set(src.Elem())
+		f.access(t).Set(src.Elem())
 
 		return nil
 	}
@@ -283,7 +273,7 @@ func (c convertedField[T]) Scan() (any, func(*T) error) {
 			return nil
 		}
 
-		c.field.Access(t).Set(dst)
+		c.field.access(t).Set(dst)
 
 		return nil
 	}
@@ -323,7 +313,7 @@ func Default(value any) Converter {
 			return nil, nil, fmt.Errorf("default converter: %w", err)
 		}
 
-		return reflect.PointerTo(dstType), func(src reflect.Value) (reflect.Value, error) {
+		return reflect.PointerTo(typ), func(src reflect.Value) (reflect.Value, error) {
 			if !src.IsValid() || src.IsNil() {
 				return conv(r)
 			}
@@ -906,6 +896,26 @@ func refValue(v reflect.Value, levels int) reflect.Value {
 }
 
 func autoConverter(dstType, srcType reflect.Type) (Convert, error) {
+	if dstType.Kind() == reflect.Pointer {
+		elem, levels := derefType(dstType)
+
+		conv, err := autoConverter(elem, srcType)
+		if err != nil {
+			return nil, err
+		}
+
+		return func(src reflect.Value) (reflect.Value, error) {
+			var err error
+
+			src, err = conv(src)
+			if err != nil {
+				return invalid, err
+			}
+
+			return refValue(src, levels), nil
+		}, nil
+	}
+
 	if srcType.AssignableTo(dstType) {
 		return func(f reflect.Value) (reflect.Value, error) {
 			return f, nil
@@ -933,26 +943,6 @@ func autoConverter(dstType, srcType reflect.Type) (Convert, error) {
 			}
 
 			return convert(src)
-		}, nil
-	}
-
-	if dstType.Kind() == reflect.Pointer {
-		elem, levels := derefType(dstType)
-
-		conv, err := autoConverter(elem, srcType)
-		if err != nil {
-			return nil, err
-		}
-
-		return func(src reflect.Value) (reflect.Value, error) {
-			var err error
-
-			src, err = conv(src)
-			if err != nil {
-				return invalid, err
-			}
-
-			return refValue(src, levels), nil
 		}, nil
 	}
 
