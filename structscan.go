@@ -916,18 +916,6 @@ func autoConverter(dstType, srcType reflect.Type) (Convert, error) {
 		}, nil
 	}
 
-	if srcType.AssignableTo(dstType) {
-		return func(f reflect.Value) (reflect.Value, error) {
-			return f, nil
-		}, nil
-	}
-
-	if srcType.ConvertibleTo(dstType) {
-		return func(f reflect.Value) (reflect.Value, error) {
-			return f.Convert(dstType), nil
-		}, nil
-	}
-
 	if srcType.Kind() == reflect.Pointer {
 		srcType, levels := derefType(srcType)
 
@@ -943,6 +931,18 @@ func autoConverter(dstType, srcType reflect.Type) (Convert, error) {
 			}
 
 			return convert(src)
+		}, nil
+	}
+
+	if srcType.AssignableTo(dstType) {
+		return func(f reflect.Value) (reflect.Value, error) {
+			return f, nil
+		}, nil
+	}
+
+	if srcType.ConvertibleTo(dstType) {
+		return func(f reflect.Value) (reflect.Value, error) {
+			return f.Convert(dstType), nil
 		}, nil
 	}
 
