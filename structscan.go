@@ -664,20 +664,18 @@ func Cut(sep string, converters ...Converter) Converter {
 	converter := Chain(converters...)
 
 	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		kind := dstType.Kind()
+		srcType, convert, err := converter(dstType.Elem())
+		if err != nil {
+			return nil, nil, fmt.Errorf("cut converter: %w", err)
+		}
 
-		switch kind {
+		assign, err := assigner(srcType, stringType)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cut converter: %w", err)
+		}
+
+		switch dstType.Kind() {
 		case reflect.Slice:
-			srcType, convert, err := converter(dstType.Elem())
-			if err != nil {
-				return nil, nil, fmt.Errorf("cut converter: %w", err)
-			}
-
-			assign, err := assigner(srcType, stringType)
-			if err != nil {
-				return nil, nil, fmt.Errorf("cut converter: %w", err)
-			}
-
 			return stringType, func(src reflect.Value) (reflect.Value, error) {
 				str := src.String()
 				if str == "" {
@@ -714,16 +712,6 @@ func Cut(sep string, converters ...Converter) Converter {
 		case reflect.Array:
 			if dstType.Len() < 2 {
 				return nil, nil, fmt.Errorf("cut converter: invalid type: %s", dstType)
-			}
-
-			srcType, convert, err := converter(dstType.Elem())
-			if err != nil {
-				return nil, nil, fmt.Errorf("cut converter: %w", err)
-			}
-
-			assign, err := assigner(srcType, stringType)
-			if err != nil {
-				return nil, nil, fmt.Errorf("cut converter: %w", err)
 			}
 
 			return stringType, func(src reflect.Value) (reflect.Value, error) {
@@ -769,20 +757,18 @@ func Split(sep string, converters ...Converter) Converter {
 	converter := Chain(converters...)
 
 	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		kind := dstType.Kind()
+		srcType, convert, err := converter(dstType.Elem())
+		if err != nil {
+			return nil, nil, fmt.Errorf("split converter: %w", err)
+		}
 
-		switch kind {
+		assign, err := assigner(srcType, stringType)
+		if err != nil {
+			return nil, nil, fmt.Errorf("split converter: %w", err)
+		}
+
+		switch dstType.Kind() {
 		case reflect.Slice:
-			srcType, convert, err := converter(dstType.Elem())
-			if err != nil {
-				return nil, nil, fmt.Errorf("split converter: %w", err)
-			}
-
-			assign, err := assigner(srcType, stringType)
-			if err != nil {
-				return nil, nil, fmt.Errorf("split converter: %w", err)
-			}
-
 			return stringType, func(src reflect.Value) (reflect.Value, error) {
 				str := src.String()
 				if str == "" {
@@ -810,16 +796,6 @@ func Split(sep string, converters ...Converter) Converter {
 				return dst, nil
 			}, nil
 		case reflect.Array:
-			srcType, convert, err := converter(dstType.Elem())
-			if err != nil {
-				return nil, nil, fmt.Errorf("split converter: %w", err)
-			}
-
-			assign, err := assigner(srcType, stringType)
-			if err != nil {
-				return nil, nil, fmt.Errorf("split converter: %w", err)
-			}
-
 			return stringType, func(src reflect.Value) (reflect.Value, error) {
 				str := src.String()
 				if str == "" {
