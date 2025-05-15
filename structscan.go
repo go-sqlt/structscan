@@ -679,8 +679,13 @@ func Cut(sep string, converters ...Converter) Converter {
 			}
 
 			return stringType, func(src reflect.Value) (reflect.Value, error) {
+				str := src.String()
+				if str == "" {
+					return invalid, nil
+				}
+
 				var (
-					before, after, _ = strings.Cut(src.String(), sep)
+					before, after, _ = strings.Cut(str, sep)
 					dst              = reflect.MakeSlice(dstType, 2, 2)
 					val              reflect.Value
 					err              error
@@ -722,8 +727,13 @@ func Cut(sep string, converters ...Converter) Converter {
 			}
 
 			return stringType, func(src reflect.Value) (reflect.Value, error) {
+				str := src.String()
+				if str == "" {
+					return invalid, nil
+				}
+
 				var (
-					before, after, _ = strings.Cut(src.String(), sep)
+					before, after, _ = strings.Cut(str, sep)
 					dst              = reflect.New(dstType).Elem()
 					val              reflect.Value
 					err              error
@@ -774,8 +784,13 @@ func Split(sep string, converters ...Converter) Converter {
 			}
 
 			return stringType, func(src reflect.Value) (reflect.Value, error) {
+				str := src.String()
+				if str == "" {
+					return invalid, nil
+				}
+
 				var (
-					split = strings.Split(src.String(), sep)
+					split = strings.Split(str, sep)
 					dst   = reflect.MakeSlice(dstType, len(split), len(split))
 					val   reflect.Value
 					err   error
@@ -806,8 +821,13 @@ func Split(sep string, converters ...Converter) Converter {
 			}
 
 			return stringType, func(src reflect.Value) (reflect.Value, error) {
+				str := src.String()
+				if str == "" {
+					return invalid, nil
+				}
+
 				var (
-					split = strings.Split(src.String(), sep)
+					split = strings.Split(str, sep)
 					dst   = reflect.New(dstType).Elem()
 					val   reflect.Value
 					err   error
