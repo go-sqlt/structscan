@@ -14,460 +14,986 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type MyTime time.Time
-
-type MyString string
-
-type Sample struct {
-	Int      int64
-	String   *string
-	Bool     bool
-	Time     time.Time
-	MyTime   MyTime
-	Big      *big.Int
-	URL      *url.URL
-	Slice    []*string
-	JSON     map[string]any
-	RawJSON  json.RawMessage
-	IntField int32
-}
-
-var (
-	schema       = structscan.Describe[Sample]()
-	sampleMapper = structscan.Map(
-		schema.MustField("Int").MustConvert(structscan.Default(100)),
-		schema["String"].MustConvert(structscan.Nullable()),
-		schema["Bool"].MustConvert(structscan.ParseBool()),
-		schema["Time"].MustConvert(structscan.ParseTime(time.DateOnly)),
-		schema["MyTime"].MustConvert(structscan.ParseTimeInLocation(time.RFC3339Nano, time.UTC)),
-		schema["Big"].MustConvert(structscan.UnmarshalText()),
-		schema["URL"].MustConvert(structscan.UnmarshalBinary()),
-		schema["Slice"].MustConvert(structscan.Split(",")),
-		schema["JSON"].MustConvert(structscan.UnmarshalJSON()),
-		schema["RawJSON"].MustConvert(structscan.UnmarshalJSON()),
-		schema["IntField"],
-	)
-)
-
-func TestSample(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	_, err = db.Exec(`
-		CREATE TABLE sample (
-			int_val INTEGER,
-			str_val TEXT,
-			bool_val BOOLEAN,
-			time_val TEXT,
-			my_time_val DATE,
-			big_val TEXT,
-			url_val TEXT,
-			ints_val TEXT,
-			json_val TEXT,
-			raw_json_val BLOB,
-			int_field INTEGER
-		)
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = db.Exec(`
-		INSERT INTO sample VALUES
-		(1, 'test', 't', '2025-05-01', '2025-05-01', '12345678901234567890', 'https://example.com/test?q=1', '10,20,30', '{"a": 1}', '{"a": 1}', 123)
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := Sample{
-		Int:    1,
-		String: ptr("test"),
-		Bool:   true,
-		Time:   mustParse("2025-05-01"),
-		MyTime: MyTime(mustParse("2025-05-01")),
-		Big:    bigFromString("12345678901234567890"),
-		URL:    mustURL("https://example.com/test?q=1"),
-		Slice: []*string{
-			ptr("10"), ptr("20"), ptr("30"),
-		},
-		JSON:     map[string]any{"a": float64(1)},
-		RawJSON:  []byte(`{"a":1}`),
-		IntField: 123,
-	}
-
-	tests := []struct {
-		name   string
-		scanFn func(*sql.DB) (Sample, error)
-	}{
-		{
-			name: "Row",
-			scanFn: func(db *sql.DB) (Sample, error) {
-				row := db.QueryRow(`SELECT * FROM sample`)
-				return sampleMapper.Row(row)
-			},
-		},
-		{
-			name: "One",
-			scanFn: func(db *sql.DB) (Sample, error) {
-				rows, err := db.Query(`SELECT * FROM sample`)
-				if err != nil {
-					return Sample{}, err
-				}
-
-				return sampleMapper.One(rows)
-			},
-		},
-		{
-			name: "All[0]",
-			scanFn: func(db *sql.DB) (Sample, error) {
-				rows, err := db.Query(`SELECT * FROM sample`)
-				if err != nil {
-					return Sample{}, err
-				}
-
-				all, err := sampleMapper.All(rows)
-				if err != nil {
-					return Sample{}, err
-				}
-
-				if len(all) != 1 {
-					return Sample{}, fmt.Errorf("expected 1 row, got %d", len(all))
-				}
-
-				return all[0], nil
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.scanFn(db)
-			if err != nil {
-				t.Fatalf("scanFn failed: %v", err)
-			}
-
-			if !reflect.DeepEqual(got.Int, expected.Int) ||
-				*got.String != *expected.String ||
-				got.Bool != expected.Bool ||
-				!got.Time.Equal(expected.Time) ||
-				got.Big.String() != expected.Big.String() ||
-				got.URL.String() != expected.URL.String() ||
-				!reflect.DeepEqual(got.Slice, expected.Slice) ||
-				!reflect.DeepEqual(got.JSON, expected.JSON) {
-				t.Errorf("got %+v; want %+v", got, expected)
-			}
-		})
-	}
-}
-
-func TestIntColumn(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	tests := []struct {
-		name     string
-		scanFn   func(db *sql.DB) *sql.Row
-		expected int64
-	}{
-		{
-			name: "int",
-			scanFn: func(db *sql.DB) *sql.Row {
-				return db.QueryRow("SELECT 100")
-			},
-			expected: 100,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mapper := structscan.Map[int64]()
-
-			row := tt.scanFn(db)
-			if err != nil {
-				t.Fatalf("scanFn failed: %v", err)
-			}
-
-			result, err := mapper.Row(row)
-			if err != nil {
-				t.Fatalf("scanFn failed: %v", err)
-			}
-
-			if !reflect.DeepEqual(result, tt.expected) {
-				t.Errorf("got %+v; want %+v", result, tt.expected)
-			}
-		})
-	}
-}
-
 func ptr[T any](v T) *T {
 	return &v
 }
 
-func bigFromString(s string) *big.Int {
-	i := new(big.Int)
-	i.SetString(s, 10)
-	return i
-}
+// func bigFromString(s string) *big.Int {
+// 	i := new(big.Int)
+// 	i.SetString(s, 10)
+// 	return i
+// }
 
-func mustURL(raw string) *url.URL {
-	u, err := url.Parse(raw)
+// func mustURL(raw string) *url.URL {
+// 	u, err := url.Parse(raw)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	return u
+// }
+
+// func mustParse(date string) time.Time {
+// 	t, err := time.Parse(time.DateOnly, date)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	return t
+// }
+
+func TestString(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
-	return u
-}
+	defer db.Close()
 
-func mustParse(date string) time.Time {
-	t, err := time.Parse(time.DateOnly, date)
+	type T struct {
+		Direct            string
+		Nullable          *string
+		NullableNull      string
+		Value             *string
+		ValueNullable     string
+		ValueNullableNull *string
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"],
+		schema["Nullable"].Nullable(),
+		schema["NullableNull"].Nullable(),
+		schema["Value"].MustString(),
+		schema["ValueNullable"].MustString().Nullable(),
+		schema["ValueNullableNull"].MustString().Nullable(),
+	)
+
+	expect := T{
+		Direct:            "hello",
+		Nullable:          ptr("hello"),
+		NullableNull:      "",
+		Value:             ptr("hello"),
+		ValueNullable:     "hello",
+		ValueNullableNull: nil,
+	}
+
+	rows, err := db.Query("SELECT 'hello', 'hello', NULL, 'hello', 'hello', NULL")
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
-	return t
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
 }
 
-func TestDecoders(t *testing.T) {
-	tests := []struct {
-		converter structscan.Converter
-		src       any
-		result    any
-	}{
-		{
-			converter: structscan.Atoi(),
-			src:       "100",
-			result:    int64(100),
-		},
-		{
-			converter: structscan.ParseInt(10, 64),
-			src:       "100",
-			result:    int32(100),
-		},
-		{
-			converter: structscan.ParseInt(10, 64),
-			src:       "100",
-			result:    int64(100),
-		},
-		{
-			converter: structscan.ParseInt(10, 64),
-			src:       "100",
-			result:    int32(100),
-		},
-		{
-			converter: structscan.ParseBool(),
-			src:       "t",
-			result:    true,
-		},
-		{
-			converter: structscan.ParseUint(10, 64),
-			src:       "10",
-			result:    uint16(10),
-		},
-		{
-			converter: structscan.ParseFloat(64),
-			src:       "10.123",
-			result:    float32(10.123),
-		},
-		{
-			converter: structscan.ParseComplex(128),
-			src:       "10",
-			result:    complex128(10),
-		},
-		{
-			converter: structscan.ParseTime("2006"),
-			src:       "2022",
-			result: func() time.Time {
-				v, _ := time.Parse("2006", "2022")
+func TestInt(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
 
-				return v
-			}(),
-		},
-		{
-			converter: structscan.ParseTimeInLocation("2006", time.UTC),
-			src:       "2022",
-			result: func() MyTime {
-				v, _ := time.Parse("2006", "2022")
-
-				return MyTime(v)
-			}(),
-		},
-		{
-			converter: structscan.ParseTimeInLocation("2006", time.UTC),
-			src:       "2022",
-			result: func() time.Time {
-				v, _ := time.Parse("2006", "2022")
-
-				return v
-			}(),
-		},
-		{
-			converter: structscan.ParseTimeInLocation("2006", time.UTC),
-			src:       "2022",
-			result: func() MyTime {
-				v, _ := time.Parse("2006", "2022")
-
-				return MyTime(v)
-			}(),
-		},
-		{
-			converter: structscan.Split("-"),
-			src:       "100-200-300",
-			result:    []string{"100", "200", "300"},
-		},
-		{
-			converter: structscan.Split("-"),
-			src:       "100-200-300",
-			result:    [3]string{"100", "200", "300"},
-		},
-		{
-			converter: structscan.Split("-"),
-			src:       "100-200-300",
-			result:    []MyString{"100", "200", "300"},
-		},
-		{
-			converter: structscan.Cut("-"),
-			src:       "100-200",
-			result:    [2]MyString{"100", "200"},
-		},
-		{
-			converter: structscan.Cut("-"),
-			src:       "100-200",
-			result:    []MyString{"100", "200"},
-		},
-		{
-			converter: structscan.Default(url.URL{Path: "path", Host: "host"}),
-			src:       nil,
-			result:    url.URL{Path: "path", Host: "host"},
-		},
-		{
-			converter: structscan.Trim("()"),
-			src:       "(hello)",
-			result:    "hello",
-		},
-		{
-			converter: structscan.TrimPrefix("prefix-"),
-			src:       "prefix-(hello)",
-			result:    "(hello)",
-		},
-		{
-			converter: structscan.Chain(structscan.TrimSuffix("-suffix"), structscan.Trim("()")),
-			src:       "(hello)-suffix",
-			result:    "hello",
-		},
-		{
-			converter: structscan.EqualFold("hello"),
-			src:       "HELLO",
-			result:    true,
-		},
-		{
-			converter: structscan.Contains("hello"),
-			src:       "hello world",
-			result:    true,
-		},
-		{
-			converter: structscan.Index("world"),
-			src:       "hello world",
-			result:    6,
-		},
-		{
-			converter: structscan.ContainsAny("abc"),
-			src:       "hello world",
-			result:    false,
-		},
-		{
-			converter: structscan.HasPrefix("hello"),
-			src:       "hello world",
-			result:    true,
-		},
-		{
-			converter: structscan.HasSuffix("world"),
-			src:       "hello world",
-			result:    true,
-		},
-		{
-			converter: structscan.Count("l"),
-			src:       "hello world",
-			result:    3,
-		},
-		{
-			converter: structscan.MustEnum("hello", 1, "world", 2),
-			src:       "hello",
-			result:    1,
-		},
-		{
-			converter: structscan.MustOneOf("hello", "world"),
-			src:       "world",
-			result:    "world",
-		},
-		{
-			converter: structscan.Nullable(),
-			src:       ptr("hello"),
-			result:    "hello",
-		},
-		{
-			converter: structscan.ToLower(),
-			src:       "HELLO",
-			result:    "hello",
-		},
-		{
-			converter: structscan.ToUpper(),
-			src:       "hello",
-			result:    "HELLO",
-		},
-		{
-			converter: structscan.UnmarshalBinary(),
-			src:       []byte(`https://localhost`),
-			result: url.URL{
-				Scheme: "https",
-				Host:   "localhost",
-			},
-		},
-		{
-			converter: structscan.UnmarshalBinary(),
-			src:       []byte(`https://localhost`),
-			result: &url.URL{
-				Scheme: "https",
-				Host:   "localhost",
-			},
-		},
-		{
-			converter: structscan.UnmarshalText(),
-			src:       []byte(`10000`),
-			result:    big.NewInt(10_000),
-		},
-		{
-			converter: structscan.UnmarshalText(),
-			src:       []byte(`10000`),
-			result:    *big.NewInt(10_000),
-		},
-		{
-			converter: structscan.Chain(),
-			src:       10000,
-			result:    10000,
-		},
+	type T struct {
+		Direct            int64
+		Nullable          *int32
+		NullableNull      int16
+		Value             *int8
+		ValueNullable     int
+		ValueNullableNull *int64
 	}
 
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%v", tt.src), func(t *testing.T) {
-			dstType := reflect.TypeOf(tt.result)
+	schema := structscan.New[T]()
 
-			_, convert, err := tt.converter(dstType)
-			if err != nil {
-				t.Fatal(err)
-			}
+	mapper := structscan.Map(
+		schema["Direct"],
+		schema["Nullable"].Nullable(),
+		schema["NullableNull"].Nullable(),
+		schema["Value"].MustInt(),
+		schema["ValueNullable"].MustInt().Nullable(),
+		schema["ValueNullableNull"].MustInt().Nullable(),
+	)
 
-			val, err := convert(reflect.ValueOf(tt.src))
-			if err != nil {
-				panic(err)
-			}
+	expect := T{
+		Direct:            1,
+		Nullable:          ptr[int32](2),
+		NullableNull:      0,
+		Value:             ptr[int8](3),
+		ValueNullable:     4,
+		ValueNullableNull: nil,
+	}
 
-			if !reflect.DeepEqual(val.Interface(), tt.result) {
-				t.Fatal("value is not equal", val.Interface(), tt.result)
-			}
-		})
+	rows, err := db.Query("SELECT 1, 2, NULL, 3, 4, NULL")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestFloat(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            float64
+		Nullable          *float64
+		NullableNull      float32
+		Value             *float32
+		ValueNullable     float64
+		ValueNullableNull *float64
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"],
+		schema["Nullable"].Nullable(),
+		schema["NullableNull"].Nullable(),
+		schema["Value"].MustFloat(),
+		schema["ValueNullable"].MustFloat().Nullable(),
+		schema["ValueNullableNull"].MustFloat().Nullable(),
+	)
+
+	expect := T{
+		Direct:            1.23,
+		Nullable:          ptr(2.34),
+		NullableNull:      0,
+		Value:             ptr[float32](3.45),
+		ValueNullable:     4.56,
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT 1.23, 2.34, NULL, 3.45, 4.56, NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestBool(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            bool
+		Nullable          *bool
+		NullableNull      bool
+		Value             *bool
+		ValueNullable     bool
+		ValueNullableNull *bool
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"],
+		schema["Nullable"].Nullable(),
+		schema["NullableNull"].Nullable(),
+		schema["Value"].MustBool(),
+		schema["ValueNullable"].MustBool().Nullable(),
+		schema["ValueNullableNull"].MustBool().Nullable(),
+	)
+
+	expect := T{
+		Direct:            true,
+		Nullable:          ptr(false),
+		NullableNull:      false,
+		Value:             ptr(false),
+		ValueNullable:     true,
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT true, false, NULL, false, true, NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestTime(t *testing.T) {
+	type MyTime time.Time
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            time.Time
+		Nullable          *time.Time
+		NullableNull      MyTime
+		Value             *MyTime
+		ValueNullable     time.Time
+		ValueNullableNull *time.Time
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"],
+		schema["Nullable"].Nullable(),
+		schema["NullableNull"].Nullable(),
+		schema["Value"].MustTime(),
+		schema["ValueNullable"].MustTime().Nullable(),
+		schema["ValueNullableNull"].MustTime().Nullable(),
+	)
+
+	time.Local = time.UTC
+	now := time.Now().UTC()
+	fmt.Println(now)
+
+	expect := T{
+		Direct:            now,
+		Nullable:          ptr(now),
+		NullableNull:      MyTime{},
+		Value:             ptr(MyTime(now)),
+		ValueNullable:     now,
+		ValueNullableNull: nil,
+	}
+
+	_, err = db.Exec("CREATE TABLE my_time ( value DATE )")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = db.Exec("INSERT INTO my_time (value) VALUES (?)", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	row := db.QueryRow("SELECT value, value, NULL, value, value, NULL FROM my_time")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestBytes(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            []byte
+		Nullable          *[]byte
+		NullableNull      json.RawMessage
+		Value             *json.RawMessage
+		ValueNullable     []byte
+		ValueNullableNull *[]byte
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"],
+		schema["Nullable"].Nullable(),
+		schema["NullableNull"].Nullable(),
+		schema["Value"].MustBytes(),
+		schema["ValueNullable"].MustBytes().Nullable(),
+		schema["ValueNullableNull"].MustBytes().Nullable(),
+	)
+
+	expect := T{
+		Direct:            []byte(`"hello"`),
+		Nullable:          ptr([]byte(`"hello"`)),
+		NullableNull:      nil,
+		Value:             ptr(json.RawMessage(`"hello"`)),
+		ValueNullable:     []byte(`"hello"`),
+		ValueNullableNull: nil,
+	}
+
+	rows, err := db.Query(`SELECT '"hello"', '"hello"', NULL, '"hello"', '"hello"', NULL`)
+
+	result, err := mapper.All(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result[0], expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestSplit(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            []string
+		Nullable          *[]string
+		NullableNull      [2]string
+		Value             *[2]*string
+		ValueNullable     []*string
+		ValueNullableNull *[]string
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustSplit(","),
+		schema["Nullable"].Nullable().MustSplit(","),
+		schema["NullableNull"].MustSplit(",").Nullable(),
+		schema["Value"].MustSplit(","),
+		schema["ValueNullable"].Nullable().MustSplit(","),
+		schema["ValueNullableNull"].MustSplit(",").Nullable(),
+	)
+
+	expect := T{
+		Direct:            []string{"hello", "world"},
+		Nullable:          ptr([]string{"hello", "world"}),
+		NullableNull:      [2]string{},
+		Value:             ptr([2]*string{ptr("hello"), ptr("world")}),
+		ValueNullable:     []*string{ptr("hello"), ptr("world")},
+		ValueNullableNull: nil,
+	}
+
+	rows, err := db.Query(`SELECT 'hello,world', 'hello,world', NULL, 'hello,world', 'hello,world', NULL`)
+
+	result, err := mapper.All(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result[0], expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestParseInt(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            int64
+		Nullable          *int32
+		NullableNull      int16
+		Value             *int8
+		ValueNullable     int
+		ValueNullableNull *int64
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustParseInt(10, 64),
+		schema["Nullable"].Nullable().MustParseInt(10, 32),
+		schema["NullableNull"].MustParseInt(10, 16).Nullable(),
+		schema["Value"].MustParseInt(10, 8),
+		schema["ValueNullable"].MustParseInt(10, 64).Nullable(),
+		schema["ValueNullableNull"].Nullable().MustParseInt(10, 64),
+	)
+
+	expect := T{
+		Direct:            1,
+		Nullable:          ptr[int32](2),
+		NullableNull:      0,
+		Value:             ptr[int8](3),
+		ValueNullable:     4,
+		ValueNullableNull: nil,
+	}
+
+	rows, err := db.Query("SELECT '1', '2', NULL, '3', '4', NULL")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestParseUint(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            uint64
+		Nullable          *uint32
+		NullableNull      uint16
+		Value             *uint8
+		ValueNullable     uint
+		ValueNullableNull *uint64
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustParseUint(10, 64),
+		schema["Nullable"].Nullable().MustParseUint(10, 32),
+		schema["NullableNull"].MustParseUint(10, 16).Nullable(),
+		schema["Value"].MustParseUint(10, 8),
+		schema["ValueNullable"].MustParseUint(10, 64).Nullable(),
+		schema["ValueNullableNull"].Nullable().MustParseUint(10, 64),
+	)
+
+	expect := T{
+		Direct:            1,
+		Nullable:          ptr[uint32](2),
+		NullableNull:      0,
+		Value:             ptr[uint8](3),
+		ValueNullable:     4,
+		ValueNullableNull: nil,
+	}
+
+	rows, err := db.Query("SELECT '1', '2', NULL, '3', '4', NULL")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestParseFloat(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            float64
+		Nullable          *float64
+		NullableNull      float32
+		Value             *float32
+		ValueNullable     float64
+		ValueNullableNull *float64
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustParseFloat(64),
+		schema["Nullable"].Nullable().MustParseFloat(64),
+		schema["NullableNull"].Nullable().MustParseFloat(64),
+		schema["Value"].MustParseFloat(64),
+		schema["ValueNullable"].MustParseFloat(64).Nullable(),
+		schema["ValueNullableNull"].MustParseFloat(64).Nullable(),
+	)
+
+	expect := T{
+		Direct:            1.23,
+		Nullable:          ptr(2.34),
+		NullableNull:      0,
+		Value:             ptr[float32](3.45),
+		ValueNullable:     4.56,
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT '1.23', '2.34', NULL, '3.45', '4.56', NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestParseComplex(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            complex128
+		Nullable          *complex128
+		NullableNull      complex64
+		Value             *complex64
+		ValueNullable     complex128
+		ValueNullableNull *complex128
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustParseComplex(128),
+		schema["Nullable"].Nullable().MustParseComplex(128),
+		schema["NullableNull"].Nullable().MustParseComplex(64),
+		schema["Value"].MustParseComplex(64),
+		schema["ValueNullable"].MustParseComplex(128).Nullable(),
+		schema["ValueNullableNull"].MustParseComplex(128).Nullable(),
+	)
+
+	expect := T{
+		Direct:            complex(10, 3),
+		Nullable:          ptr(complex(10, 3)),
+		NullableNull:      complex(0, 0),
+		Value:             ptr[complex64](complex(10, 3)),
+		ValueNullable:     complex(10, 3),
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT '10+3i', '10+3i', NULL, '10+3i', '10+3i', NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestParseBool(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            bool
+		Nullable          *bool
+		NullableNull      bool
+		Value             *bool
+		ValueNullable     bool
+		ValueNullableNull *bool
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustParseBool(),
+		schema["Nullable"].Nullable().MustParseBool(),
+		schema["NullableNull"].Nullable().MustParseBool(),
+		schema["Value"].MustParseBool(),
+		schema["ValueNullable"].MustParseBool().Nullable(),
+		schema["ValueNullableNull"].MustParseBool().Nullable(),
+	)
+
+	expect := T{
+		Direct:            true,
+		Nullable:          ptr(false),
+		NullableNull:      false,
+		Value:             ptr(false),
+		ValueNullable:     true,
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT 'true', '0', NULL, 'f', 't', NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestParseTime(t *testing.T) {
+	type MyTime time.Time
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            time.Time
+		Nullable          *time.Time
+		NullableNull      MyTime
+		Value             *MyTime
+		ValueNullable     time.Time
+		ValueNullableNull *time.Time
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustParseTime(time.DateOnly),
+		schema["Nullable"].Nullable().MustParseTime(time.DateOnly),
+		schema["NullableNull"].Nullable().MustParseTime(time.DateOnly),
+		schema["Value"].MustParseTime(time.DateOnly),
+		schema["ValueNullable"].MustParseTime(time.DateOnly).Nullable(),
+		schema["ValueNullableNull"].MustParseTime(time.DateOnly).Nullable(),
+	)
+
+	date, err := time.Parse(time.DateOnly, "2020-12-31")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := T{
+		Direct:            date,
+		Nullable:          ptr(date),
+		NullableNull:      MyTime{},
+		Value:             ptr(MyTime(date)),
+		ValueNullable:     date,
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT '2020-12-31', '2020-12-31', NULL, '2020-12-31', '2020-12-31', NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestParseTimeInLocation(t *testing.T) {
+	type MyTime time.Time
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            time.Time
+		Nullable          *time.Time
+		NullableNull      MyTime
+		Value             *MyTime
+		ValueNullable     time.Time
+		ValueNullableNull *time.Time
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustParseTimeInLocation(time.DateOnly, time.UTC),
+		schema["Nullable"].Nullable().MustParseTimeInLocation(time.DateOnly, time.UTC),
+		schema["NullableNull"].Nullable().MustParseTimeInLocation(time.DateOnly, time.UTC),
+		schema["Value"].MustParseTimeInLocation(time.DateOnly, time.UTC),
+		schema["ValueNullable"].MustParseTimeInLocation(time.DateOnly, time.UTC).Nullable(),
+		schema["ValueNullableNull"].MustParseTimeInLocation(time.DateOnly, time.UTC).Nullable(),
+	)
+
+	date, err := time.ParseInLocation(time.DateOnly, "2020-12-31", time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := T{
+		Direct:            date,
+		Nullable:          ptr(date),
+		NullableNull:      MyTime{},
+		Value:             ptr(MyTime(date)),
+		ValueNullable:     date,
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT '2020-12-31', '2020-12-31', NULL, '2020-12-31', '2020-12-31', NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestStringEnum(t *testing.T) {
+	type Status string
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            Status
+		Nullable          *Status
+		NullableNull      Status
+		Value             *Status
+		ValueNullable     Status
+		ValueNullableNull *Status
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustStringEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema["Nullable"].Nullable().MustStringEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema["NullableNull"].Nullable().MustStringEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema["Value"].MustStringEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema["ValueNullable"].MustStringEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		).Nullable(),
+		schema["ValueNullableNull"].MustStringEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		).Nullable(),
+	)
+
+	expect := T{
+		Direct:            "Active",
+		Nullable:          ptr[Status]("Inactive"),
+		NullableNull:      Status(""),
+		Value:             ptr(Status("Active")),
+		ValueNullable:     "Inactive",
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT 1, 0, NULL, 1, 0, NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestIntEnum(t *testing.T) {
+	type Status int
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            Status
+		Nullable          *Status
+		NullableNull      Status
+		Value             *Status
+		ValueNullable     Status
+		ValueNullableNull *Status
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Direct"].MustIntEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema["Nullable"].Nullable().MustIntEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema["NullableNull"].Nullable().MustIntEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema["Value"].MustIntEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema["ValueNullable"].MustIntEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		).Nullable(),
+		schema["ValueNullableNull"].MustIntEnum(
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		).Nullable(),
+	)
+
+	expect := T{
+		Direct:            1,
+		Nullable:          ptr[Status](0),
+		NullableNull:      Status(0),
+		Value:             ptr(Status(1)),
+		ValueNullable:     0,
+		ValueNullableNull: nil,
+	}
+
+	row := db.QueryRow("SELECT 'Active', 'Inactive', NULL, 'Active', 'Inactive', NULL")
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestUnmarshalJSON(t *testing.T) {
+	type T map[string]any
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema[""].UnmarshalJSON(),
+	)
+
+	expect := T{
+		"hello": "world",
+	}
+
+	row := db.QueryRow(`SELECT '{"hello": "world"}'`)
+
+	result, err := mapper.Row(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestUnmarshalBinary(t *testing.T) {
+	type T struct {
+		URL *url.URL
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["URL"].MustUnmarshalBinary(),
+	)
+
+	u, err := url.Parse("https://localhost:1234/path?query=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := T{
+		URL: u,
+	}
+
+	rows, err := db.Query(`SELECT 'https://localhost:1234/path?query=true'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestUnmarshalText(t *testing.T) {
+	type T struct {
+		Big *big.Int
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema["Big"].MustUnmarshalText(),
+	)
+
+	expect := T{
+		Big: big.NewInt(10),
+	}
+
+	rows, err := db.Query(`SELECT '10'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
 	}
 }

@@ -4,7 +4,7 @@
 [![GitHub tag (latest SemVer)](https://img.shields.io/github/tag/go-sqlt/structscan.svg?style=social)](https://github.com/go-sqlt/structscan/tags)
 [![Coverage](https://img.shields.io/badge/Coverage-76.5%25-brightgreen)](https://github.com/go-sqlt/structscan/actions)
 
-**structscan** is a lightweight Go library that maps SQL query results into Go structs.
+**structscan** is a lightweight Go library that maps SQL query results to Go structs.
 
 ```sh
 go get -u github.com/go-sqlt/structscan
@@ -26,59 +26,38 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Enum int
-
-const (
-	Invalid Enum = iota
-	Active
-	Inactive
-)
-
-type EnumString string
-
-const (
-	InvalidString  EnumString = "invalid"
-	ActiveString   EnumString = "active"
-	InactiveString EnumString = "inactive"
-)
-
 type Data struct {
-	Int           int64
-	String        string
-	Bool          bool
-	Time          time.Time
-	Big           big.Int
-	URL           *url.URL
-	SliceSliceInt [2][3]int
-	JSON          map[string]string
-	Enum          Enum
-	EnumSlice     []EnumString
+	Int    int
+	String string
+	Bool   bool
+	Time   *time.Time
+	Big    big.Int
+	URL    *url.URL
+	JSON   map[string]string
+	Slice  []string
 }
 
 var (
-	schema = structscan.Describe[Data]()
+	schema = structscan.New[Data]()
 	mapper = structscan.Map(
-		schema["Int"].MustConvert(structscan.MustOneOf(100, 200, 300)),
-		schema["String"].MustConvert(structscan.Default("default")),
-		schema["Bool"],
-		schema["Time"].MustConvert(structscan.ParseTime(time.DateOnly)),
-		schema["Big"].MustConvert(structscan.UnmarshalText()),
-		schema["URL"].MustConvert(structscan.UnmarshalBinary()),
-		schema["SliceSliceInt"].MustConvert(
-			structscan.Cut(",",
-				structscan.Split("-",
-					structscan.ParseInt(10, 64),
-				),
-			),
+		schema["Int"].MustIntEnum(
+			structscan.Enum{String: "one", Int: 1},
+			structscan.Enum{String: "two", Int: 2},
+			structscan.Enum{String: "three", Int: 3},
+			structscan.Enum{String: "hundred", Int: 100},
 		),
-		schema["JSON"].MustConvert(structscan.UnmarshalJSON()),
-		schema["Enum"].MustConvert(structscan.MustEnum(InvalidString, Invalid, ActiveString, Active, InactiveString, Inactive)),
-		schema["EnumSlice"].MustConvert(
-			structscan.Split(",",
-				structscan.Atoi(),
-				structscan.MustEnum(Invalid, InvalidString, Active, ActiveString, Inactive, InactiveString),
-			),
+		schema["String"].MustStringEnum(
+			structscan.Enum{String: "one", Int: 1},
+			structscan.Enum{String: "two", Int: 2},
+			structscan.Enum{String: "three", Int: 3},
+			structscan.Enum{String: "hundred", Int: 100},
 		),
+		schema["Bool"].MustBool(),
+		schema["Time"].MustParseTime(time.DateOnly).Default("2001-02-03"),
+		schema["Big"].MustUnmarshalText(),
+		schema["URL"].MustUnmarshalBinary(),
+		schema["JSON"].UnmarshalJSON().Default([]byte(`{"hello":"world"}`)),
+		schema["Slice"].MustSplit(","),
 	)
 )
 
@@ -90,16 +69,14 @@ func main() {
 
 	rows, err := db.Query(`
 		SELECT
-			100
-			, NULL
+			'one'
+			, 2
 			, true
-			, '2025-05-01'
-			, '300' as big
+			, NULL
+			, '300'
 			, 'https://example.com/path?query=yes'
-			, '100-200-300,400-500-600'
-			, '{"hello":"world"}'
-			, 'inactive'
-			, '1,2,0'
+			, NULL
+			, 'hello,world'
 	`)
 	if err != nil {
 		panic(err)
@@ -111,6 +88,6 @@ func main() {
 	}
 
 	fmt.Println(data)
-	// {100 default true 2025-05-01 00:00:00 +0000 UTC {false [300]} https://example.com/path?query=yes [[100 200 300] [400 500 600]] map[hello:world] 2 [active inactive invalid]}
+	// {1 two true 2001-02-03 00:00:00 +0000 UTC {false [300]} https://example.com/path?query=yes map[hello:world] [hello world]}
 }
 ```

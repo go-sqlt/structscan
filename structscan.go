@@ -1,3 +1,88 @@
+// Package structscan provides fast, reusable mapping from SQL query results to Go structs.
+
+// Example usage:
+/*
+
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"math/big"
+	"net/url"
+	"time"
+
+	"github.com/go-sqlt/structscan"
+	_ "modernc.org/sqlite"
+)
+
+type Data struct {
+	Int    int
+	String string
+	Bool   bool
+	Time   *time.Time
+	Big    big.Int
+	URL    *url.URL
+	JSON   map[string]string
+	Slice  []string
+}
+
+var (
+	schema = structscan.New[Data]()
+	mapper = structscan.Map(
+		schema["Int"].MustIntEnum(
+			structscan.Enum{String: "one", Int: 1},
+			structscan.Enum{String: "two", Int: 2},
+			structscan.Enum{String: "three", Int: 3},
+			structscan.Enum{String: "hundred", Int: 100},
+		),
+		schema["String"].MustStringEnum(
+			structscan.Enum{String: "one", Int: 1},
+			structscan.Enum{String: "two", Int: 2},
+			structscan.Enum{String: "three", Int: 3},
+			structscan.Enum{String: "hundred", Int: 100},
+		),
+		schema["Bool"].MustBool(),
+		schema["Time"].MustParseTime(time.DateOnly).Default("2001-02-03"),
+		schema["Big"].MustUnmarshalText(),
+		schema["URL"].MustUnmarshalBinary(),
+		schema["JSON"].UnmarshalJSON().Default([]byte(`{"hello":"world"}`)),
+		schema["Slice"].MustSplit(","),
+	)
+)
+
+func main() {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		panic(err)
+	}
+
+	rows, err := db.Query(`
+		SELECT
+			'one'
+			, 2
+			, true
+			, NULL
+			, '300'
+			, 'https://example.com/path?query=yes'
+			, NULL
+			, 'hello,world'
+	`)
+	if err != nil {
+		panic(err)
+	}
+
+	data, err := mapper.One(rows)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(data)
+	// {1 two true 2001-02-03 00:00:00 +0000 UTC {false [300]} https://example.com/path?query=yes map[hello:world] [hello world]}
+}
+
+
+*/
 package structscan
 
 import (
@@ -7,16 +92,20 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 )
 
+// Scanner provides a value for sql.Rows.Scan and a function
+// that maps the scanned result into a value of type T.
+// Both the destination and the mapping function can be reused.
 type Scanner[T any] interface {
 	Scan() (any, func(*T) error)
 }
 
+// Map returns a Mapper that combines positional scanners for populating a struct of type T.
 func Map[T any](scanners ...Scanner[T]) Mapper[T] {
 	if len(scanners) == 0 {
 		var src T
@@ -56,11 +145,14 @@ func Map[T any](scanners ...Scanner[T]) Mapper[T] {
 	}
 }
 
+// Mapper holds scan destinations and a setter to populate values of type T.
+// It is reusable across multiple sql.Rows or sql.Row instances.
 type Mapper[T any] struct {
 	Dest []any
 	Set  func(*T) error
 }
 
+// All scans all rows into a slice of T using the configured Mapper.
 func (m Mapper[T]) All(rows *sql.Rows) ([]T, error) {
 	var all []T
 
@@ -81,8 +173,11 @@ func (m Mapper[T]) All(rows *sql.Rows) ([]T, error) {
 	return all, combineErrs(rows.Err(), rows.Close())
 }
 
+// ErrTooManyRows is returned by One if more than one row exists in the result set.
 var ErrTooManyRows = errors.New("too many rows")
 
+// One maps the first row of sql.Rows into a value of type T.
+// Returns ErrTooManyRows if more than one row exists in the result set.
 func (m Mapper[T]) One(rows *sql.Rows) (T, error) {
 	var one T
 
@@ -105,6 +200,7 @@ func (m Mapper[T]) One(rows *sql.Rows) (T, error) {
 	return one, combineErrs(rows.Err(), rows.Close())
 }
 
+// Row maps a sql.Row into a value of type T.
 func (m Mapper[T]) Row(row *sql.Row) (T, error) {
 	var first T
 
@@ -119,48 +215,22 @@ func (m Mapper[T]) Row(row *sql.Row) (T, error) {
 	return first, nil
 }
 
-type Schema[T any] map[string]Field[T]
+// New returns a Struct schema that maps all accessible (exported) fields of T,
+// including nested ones, using dot notation (e.g., "Nested.Field").
+func New[T any]() Struct[T] {
+	s := Struct[T]{}
 
-func (s Schema[T]) MustField(path string) Field[T] {
-	f, err := s.Field(path)
-	if err != nil {
-		panic(err)
-	}
-
-	return f
-}
-
-func (s Schema[T]) Field(path string) (Field[T], error) {
-	f, ok := s[path]
-	if !ok {
-		return Field[T]{}, fmt.Errorf("field not found: %s", path)
-	}
-
-	return f, nil
-}
-
-func (s Schema[T]) Scan() (any, func(*T) error) {
-	field, err := s.Field("")
-	if err != nil {
-		var ignore any
-
-		return []any{ignore}, func(t *T) error {
-			return err
-		}
-	}
-
-	return field.Scan()
-}
-
-func Describe[T any]() Schema[T] {
-	s := Schema[T]{}
-
-	fillSchema(s, nil, "", reflect.TypeFor[T]())
+	s.fillSchema(nil, "", reflect.TypeFor[T]())
 
 	return s
 }
 
-func fillSchema[T any](s Schema[T], indices []int, path string, t reflect.Type) {
+// Struct is a schema mapping from field paths to Field definitions for struct type T.
+// Nested fields are addressed using dot notation (e.g., "Parent.Child").
+type Struct[T any] map[string]Field[T]
+
+// fillSchema recursively registers all exported fields of a struct, including pointers and nested structs.
+func (s Struct[T]) fillSchema(indices []int, path string, t reflect.Type) {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 
@@ -168,8 +238,9 @@ func fillSchema[T any](s Schema[T], indices []int, path string, t reflect.Type) 
 	}
 
 	s[path] = Field[T]{
-		typ:     t,
-		indices: indices,
+		dstType:  t,
+		indices:  indices,
+		nullable: false,
 	}
 
 	if t.Kind() != reflect.Struct {
@@ -189,19 +260,15 @@ func fillSchema[T any](s Schema[T], indices []int, path string, t reflect.Type) 
 			name = path + "." + sf.Name
 		}
 
-		fillSchema(s, append(indices, sf.Index[0]), name, sf.Type)
+		s.fillSchema(append(indices, sf.Index[0]), name, sf.Type)
 	}
 }
 
-type Field[T any] struct {
-	typ     reflect.Type
-	indices []int
-}
-
-func (f Field[T]) access(t *T) reflect.Value {
+// access dereferences pointer chains and accesses the target field on a struct T using its field indices.
+func access[T any](t *T, indices []int) reflect.Value {
 	dst := reflect.ValueOf(t).Elem()
 
-	for _, idx := range f.indices {
+	for _, idx := range indices {
 		if idx < 0 {
 			if dst.IsNil() {
 				dst.Set(reflect.New(dst.Type().Elem()))
@@ -218,731 +285,717 @@ func (f Field[T]) access(t *T) reflect.Value {
 	return dst
 }
 
-func (f Field[T]) MustConvert(converter Converter) Scanner[T] {
-	s, err := f.Convert(converter)
-	if err != nil {
-		panic(err)
-	}
-
-	return s
+// Field is a Scanner that uses the underlying field's type to scan values into T.
+type Field[T any] struct {
+	dstType  reflect.Type
+	nullable bool
+	indices  []int
 }
 
-func (f Field[T]) Convert(converter Converter) (Scanner[T], error) {
-	srcType, convert, err := converter(f.typ)
-	if err != nil {
-		return nil, err
-	}
-
-	return convertedField[T]{
-		field:   f,
-		srcType: srcType,
-		convert: convert,
-	}, nil
-}
-
+// Scan returns a destination and a function to assign the scanned value to a struct field.
 func (f Field[T]) Scan() (any, func(*T) error) {
-	src := reflect.New(f.typ)
+	if f.nullable {
+		src := reflect.New(reflect.PointerTo(f.dstType))
 
-	return src.Interface(), func(t *T) error {
-		if !src.IsValid() {
+		return src.Interface(), func(t *T) error {
+			elem := src.Elem()
+
+			if !elem.IsValid() || elem.IsNil() {
+				return nil
+			}
+
+			access(t, f.indices).Set(elem.Elem())
+
 			return nil
 		}
+	}
 
-		f.access(t).Set(src.Elem())
+	src := reflect.New(f.dstType)
+
+	return src.Interface(), func(t *T) error {
+		access(t, f.indices).Set(src.Elem())
 
 		return nil
 	}
 }
 
-type convertedField[T any] struct {
-	field   Field[T]
-	srcType reflect.Type
-	convert Convert
+// Nullable marks the field as nullable, allowing it to accept NULL values.
+func (f Field[T]) Nullable() Field[T] {
+	f.nullable = true
+
+	return f
 }
 
-func (c convertedField[T]) Scan() (any, func(*T) error) {
-	src := reflect.New(c.srcType)
+// MustString is like String but panics if an error occurs.
+func (f Field[T]) MustString() ValueField[string, T] {
+	return must(f.String())
+}
 
-	return src.Interface(), func(t *T) error {
-		dst, err := c.convert(src.Elem())
-		if err != nil {
-			return err
-		}
+// String scans into a string value and sets its value into the fields destination.
+func (f Field[T]) String() (ValueField[string, T], error) {
+	if f.dstType.Kind() != reflect.String {
+		return ValueField[string, T]{}, fmt.Errorf("string: invalid type: %s", f.dstType)
+	}
 
-		if !dst.IsValid() {
+	return ValueField[string, T]{
+		nullable:     f.nullable,
+		indices:      f.indices,
+		defaultValue: nil,
+		set: func(dst reflect.Value, src string) error {
+			dst.SetString(src)
+
 			return nil
-		}
-
-		c.field.access(t).Set(dst)
-
-		return nil
-	}
-}
-
-var (
-	stringType    = reflect.TypeFor[string]()
-	byteSliceType = reflect.TypeFor[[]byte]()
-	invalid       reflect.Value
-)
-
-type Converter func(dstType reflect.Type) (reflect.Type, Convert, error)
-
-type Convert func(src reflect.Value) (reflect.Value, error)
-
-func Nullable() Converter {
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		return reflect.PointerTo(dstType), func(src reflect.Value) (reflect.Value, error) {
-			if !src.IsValid() || src.IsNil() {
-				return invalid, nil
-			}
-
-			return src.Elem(), nil
-		}, nil
-	}
-}
-
-func Default(value any) Converter {
-	var (
-		r   = reflect.ValueOf(value)
-		typ = r.Type()
-	)
-
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		conv, err := autoConverter(dstType, typ)
-		if err != nil {
-			return nil, nil, fmt.Errorf("default converter: %w", err)
-		}
-
-		return reflect.PointerTo(typ), func(src reflect.Value) (reflect.Value, error) {
-			if !src.IsValid() || src.IsNil() {
-				return conv(r)
-			}
-
-			return conv(src.Elem())
-		}, nil
-	}
-}
-
-func UnmarshalJSON() Converter {
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		return byteSliceType, func(src reflect.Value) (reflect.Value, error) {
-			dst := reflect.New(dstType)
-
-			err := json.Unmarshal(src.Bytes(), dst.Interface())
-			if err != nil {
-				return invalid, fmt.Errorf("unmarshal json converter: %w", err)
-			}
-
-			return dst.Elem(), err
-		}, nil
-	}
-}
-
-var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
-
-func UnmarshalText() Converter {
-	return convertInterface("unmarshal text", textUnmarshalerType, func(iface any, src []byte) error {
-		return iface.(encoding.TextUnmarshaler).UnmarshalText(src)
-	})
-}
-
-var binaryUnmarshalerType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
-
-func UnmarshalBinary() Converter {
-	return convertInterface("unmarshal binary", binaryUnmarshalerType, func(iface any, src []byte) error {
-		return iface.(encoding.BinaryUnmarshaler).UnmarshalBinary(src)
-	})
-}
-
-func convertInterface(name string, ifaceType reflect.Type, fn func(any, []byte) error) Converter {
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		deref := dstType.Kind() != reflect.Pointer
-
-		if !dstType.Implements(ifaceType) {
-			dstType = reflect.PointerTo(dstType)
-
-			if !dstType.Implements(ifaceType) {
-				return nil, nil, fmt.Errorf("%s converter: %s does not implement %s", name, dstType, ifaceType)
-			}
-		}
-
-		return byteSliceType, func(src reflect.Value) (reflect.Value, error) {
-			ptr := reflect.New(dstType.Elem())
-			if err := fn(ptr.Interface(), src.Bytes()); err != nil {
-				return invalid, fmt.Errorf("%s converter: %w", name, err)
-			}
-
-			if deref {
-				return ptr.Elem(), nil
-			}
-
-			return ptr, nil
-		}, nil
-	}
-}
-
-func ParseTime(layout string) Converter {
-	return StringFunc("parse time", func(src string) (time.Time, error) {
-		return time.Parse(layout, src)
-	})
-}
-
-func ParseTimeInLocation(layout string, location *time.Location) Converter {
-	return StringFunc("parse time in location", func(src string) (time.Time, error) {
-		return time.ParseInLocation(layout, src, location)
-	})
-}
-
-func Atoi() Converter {
-	return StringFunc("atoi", strconv.Atoi)
-}
-
-func ParseInt(base int, bitSize int) Converter {
-	return StringFunc("parse int", func(src string) (int64, error) {
-		return strconv.ParseInt(src, base, bitSize)
-	})
-}
-
-func ParseUint(base int, bitSize int) Converter {
-	return StringFunc("parse uint", func(src string) (uint64, error) {
-		return strconv.ParseUint(src, base, bitSize)
-	})
-}
-
-func ParseFloat(bitSize int) Converter {
-	return StringFunc("parse float", func(src string) (float64, error) {
-		return strconv.ParseFloat(src, bitSize)
-	})
-}
-
-func ParseBool() Converter {
-	return StringFunc("parse bool", strconv.ParseBool)
-}
-
-func ParseComplex(bitSize int) Converter {
-	return StringFunc("parse complex", func(src string) (complex128, error) {
-		return strconv.ParseComplex(src, bitSize)
-	})
-}
-
-func StringFunc[D any](name string, fn func(src string) (D, error)) Converter {
-	typ := reflect.TypeFor[D]()
-
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		conv, err := autoConverter(dstType, typ)
-		if err != nil {
-			return nil, nil, fmt.Errorf("%s converter: %w", name, err)
-		}
-
-		return stringType, func(src reflect.Value) (reflect.Value, error) {
-			v, err := fn(src.String())
-			if err != nil {
-				return invalid, fmt.Errorf("%s converter: %w", name, err)
-			}
-
-			return conv(reflect.ValueOf(v))
-		}, nil
-	}
-}
-
-func Trim(cutset string) Converter {
-	return StringFunc("trim", func(str string) (string, error) {
-		return strings.Trim(str, cutset), nil
-	})
-}
-
-func TrimPrefix(prefix string) Converter {
-	return StringFunc("trimprefix", func(str string) (string, error) {
-		return strings.TrimPrefix(str, prefix), nil
-	})
-}
-
-func TrimSuffix(suffix string) Converter {
-	return StringFunc("trimsuffix", func(str string) (string, error) {
-		return strings.TrimSuffix(str, suffix), nil
-	})
-}
-
-func Contains(substr string) Converter {
-	return StringFunc("contains", func(str string) (bool, error) {
-		return strings.Contains(str, substr), nil
-	})
-}
-
-func ContainsAny(chars string) Converter {
-	return StringFunc("containsany", func(str string) (bool, error) {
-		return strings.ContainsAny(str, chars), nil
-	})
-}
-
-func HasPrefix(prefix string) Converter {
-	return StringFunc("hasprefix", func(str string) (bool, error) {
-		return strings.HasPrefix(str, prefix), nil
-	})
-}
-
-func HasSuffix(suffix string) Converter {
-	return StringFunc("hassuffix", func(str string) (bool, error) {
-		return strings.HasSuffix(str, suffix), nil
-	})
-}
-
-func EqualFold(substr string) Converter {
-	return StringFunc("equalfold", func(str string) (bool, error) {
-		return strings.EqualFold(str, substr), nil
-	})
-}
-
-func Index(substr string) Converter {
-	return StringFunc("index", func(str string) (int, error) {
-		return strings.Index(str, substr), nil
-	})
-}
-
-func Count(substr string) Converter {
-	return StringFunc("count", func(str string) (int, error) {
-		return strings.Count(str, substr), nil
-	})
-}
-
-func ToLower() Converter {
-	return StringFunc("tolower", func(str string) (string, error) {
-		return strings.ToLower(str), nil
-	})
-}
-
-func ToUpper() Converter {
-	return StringFunc("toupper", func(str string) (string, error) {
-		return strings.ToUpper(str), nil
-	})
-}
-
-func Chain(converters ...Converter) Converter {
-	switch len(converters) {
-	case 0:
-		return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-			return dstType, func(src reflect.Value) (reflect.Value, error) {
-				return src, nil
-			}, nil
-		}
-	case 1:
-		return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-			return converters[0](dstType)
-		}
-	}
-
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		var (
-			convert = make([]Convert, len(converters))
-			sType   = dstType
-			err     error
-		)
-
-		for i, d := range slices.Backward(converters) {
-			sType, convert[i], err = d(sType)
-			if err != nil {
-				return nil, nil, fmt.Errorf("chain converter: %w", err)
-			}
-		}
-
-		return sType, func(src reflect.Value) (reflect.Value, error) {
-			var err error
-
-			for _, a := range convert {
-				if !src.IsValid() {
-					return invalid, nil
-				}
-
-				src, err = a(src)
-				if err != nil {
-					return invalid, fmt.Errorf("chain converter: %w", err)
-				}
-			}
-
-			return src, nil
-		}, nil
-	}
-}
-
-func MustOneOf(values ...any) Converter {
-	d, err := OneOf(values...)
-	if err != nil {
-		panic(err)
-	}
-
-	return d
-}
-
-func OneOf(values ...any) (Converter, error) {
-	var valueType reflect.Type
-
-	for i, v := range values {
-		r := reflect.ValueOf(v)
-
-		if i == 0 {
-			valueType = r.Type()
-		} else if r.Type() != valueType {
-			return nil, fmt.Errorf("oneof converter: invalid value: %s", v)
-		}
-	}
-
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		conv, err := autoConverter(dstType, valueType)
-		if err != nil {
-			return nil, nil, fmt.Errorf("oneof converter: %w", err)
-		}
-
-		return valueType, func(src reflect.Value) (reflect.Value, error) {
-			if !slices.ContainsFunc(values, func(each any) bool { return reflect.DeepEqual(each, src.Interface()) }) {
-				return invalid, fmt.Errorf("oneof converter: invalid value: %v", src)
-			}
-
-			return conv(src)
-		}, nil
+		},
 	}, nil
 }
 
-func MustEnum(pairs ...any) Converter {
-	d, err := Enum(pairs...)
-	if err != nil {
-		panic(err)
-	}
-
-	return d
+// MustInt is like Int but panics if an error occurs.
+func (f Field[T]) MustInt() ValueField[int64, T] {
+	return must(f.Int())
 }
 
-func Enum(pairs ...any) (Converter, error) {
-	if len(pairs)%2 != 0 {
-		return nil, errors.New("enum converter: invalid number of arguments, must be even")
+// Int scans into an int64 and sets the value into the field's destination.
+func (f Field[T]) Int() (ValueField[int64, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[int64, T]{}, fmt.Errorf("int: invalid type: %s", f.dstType)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return ValueField[int64, T]{
+			nullable:     f.nullable,
+			indices:      f.indices, // MustString is like String but panics if an error occurs.
+			defaultValue: nil,
+			set: func(dst reflect.Value, src int64) error {
+				dst.SetInt(src)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
+// MustFloat is like Float but panics if an error occurs.
+func (f Field[T]) MustFloat() ValueField[float64, T] {
+	return must(f.Float())
+}
+
+// Float scans into a float value and sets its value into the fields destination.
+func (f Field[T]) Float() (ValueField[float64, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[float64, T]{}, fmt.Errorf("float: invalid type: %s", f.dstType)
+	case reflect.Float32, reflect.Float64:
+		return ValueField[float64, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src float64) error {
+				dst.SetFloat(src)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
+// MustBool is like Bool but panics if an error occurs.
+func (f Field[T]) MustBool() ValueField[bool, T] {
+	return must(f.Bool())
+}
+
+// Bool scans into a bool value and sets its value into the fields destination.
+func (f Field[T]) Bool() (ValueField[bool, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[bool, T]{}, fmt.Errorf("bool: invalid type: %s", f.dstType)
+	case reflect.Bool:
+		return ValueField[bool, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src bool) error {
+				dst.SetBool(src)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
+// MustBytes is like Bytes but panics if an error occurs.
+func (f Field[T]) MustBytes() ValueField[[]byte, T] {
+	return must(f.Bytes())
+}
+
+// Bytes scans into a []byte value and sets its value into the fields destination.
+func (f Field[T]) Bytes() (ValueField[[]byte, T], error) {
+	if f.dstType == byteSliceType {
+		return ValueField[[]byte, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src []byte) error {
+				dst.SetBytes(src)
+
+				return nil
+			},
+		}, nil
 	}
 
-	var (
-		keyType, valueType reflect.Type
-		mapping            = map[any]reflect.Value{}
-	)
+	if byteSliceType.ConvertibleTo(f.dstType) {
+		return ValueField[[]byte, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src []byte) error {
+				dst.Set(reflect.ValueOf(src).Convert(f.dstType))
 
-	for pair := range slices.Chunk(pairs, 2) {
-		k, v := reflect.ValueOf(pair[0]), reflect.ValueOf(pair[1])
-
-		if !k.IsValid() || !v.IsValid() {
-			return nil, fmt.Errorf("enum converter: invalid pair: %v", pair)
-		}
-
-		if keyType == nil {
-			keyType = k.Type()
-
-			if !keyType.Comparable() {
-				return nil, fmt.Errorf("enum converter: key type is not comparable: %s", keyType)
-			}
-
-			valueType = v.Type()
-		} else if k.Type() != keyType || v.Type() != valueType {
-			return nil, fmt.Errorf("enum converter: invalid pair: %v", pair)
-		}
-
-		mapping[pair[0]] = v
+				return nil
+			},
+		}, nil
 	}
 
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		conv, err := autoConverter(dstType, valueType)
-		if err != nil {
-			return nil, nil, fmt.Errorf("enum converter: %w", err)
-		}
+	return ValueField[[]byte, T]{}, fmt.Errorf("bytes: invalid type: %s", f.dstType)
+}
 
-		return keyType, func(src reflect.Value) (reflect.Value, error) {
-			value, ok := mapping[src.Interface()]
+// MustTime is like Time but panics if an error occurs.
+func (f Field[T]) MustTime() ValueField[time.Time, T] {
+	return must(f.Time())
+}
+
+// Time scans into a time.Time value and sets its value into the fields destination.
+func (f Field[T]) Time() (ValueField[time.Time, T], error) {
+	if f.dstType == timeType {
+		return ValueField[time.Time, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src time.Time) error {
+				//nolint:gosec
+				*(*time.Time)(unsafe.Pointer(dst.UnsafeAddr())) = src
+
+				return nil
+			},
+		}, nil
+	}
+
+	if timeType.ConvertibleTo(f.dstType) {
+		return ValueField[time.Time, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src time.Time) error {
+				dst.Set(reflect.ValueOf(src).Convert(f.dstType))
+
+				return nil
+			},
+		}, nil
+	}
+
+	return ValueField[time.Time, T]{}, fmt.Errorf("time: invalid type: %s", f.dstType)
+}
+
+// MustSplit is like Split but panics if an error occurs.
+func (f Field[T]) MustSplit(sep string) ValueField[string, T] {
+	return must(f.Split(sep))
+}
+
+// Split parses a delimited string and assigns the parts to a slice or array field.
+// Supports slices and fixed-length arrays of strings.
+//
+//nolint:cyclop,funlen
+func (f Field[T]) Split(sep string) (ValueField[string, T], error) {
+	if f.dstType == stringSliceType {
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				if src == "" {
+					return nil
+				}
+
+				dst.Set(reflect.ValueOf(strings.Split(src, sep)))
+
+				return nil
+			},
+		}, nil
+	}
+
+	switch f.dstType.Kind() {
+	case reflect.Slice:
+		levels, elem := indirections(f.dstType.Elem())
+
+		if elem.Kind() == reflect.String {
+			return ValueField[string, T]{
+				nullable:     f.nullable,
+				indices:      f.indices,
+				defaultValue: nil,
+				set: func(dst reflect.Value, src string) error {
+					if src == "" {
+						return nil
+					}
+
+					parts := strings.Split(src, sep)
+
+					dst.Set(reflect.MakeSlice(f.dstType, len(parts), len(parts)))
+
+					for i, p := range parts {
+						deref(dst.Index(i), levels).SetString(p)
+					}
+
+					return nil
+				},
+			}, nil
+		}
+	case reflect.Array:
+		levels, elem := indirections(f.dstType.Elem())
+
+		if elem.Kind() == reflect.String {
+			return ValueField[string, T]{
+				nullable:     f.nullable,
+				indices:      f.indices,
+				defaultValue: nil,
+				set: func(dst reflect.Value, src string) error {
+					if src == "" {
+						return nil
+					}
+
+					parts := strings.Split(src, sep)
+
+					if len(parts) > f.dstType.Len() {
+						return fmt.Errorf("split: too many elements for type %s: %v", f.dstType, len(parts))
+					}
+
+					for i, p := range parts {
+						deref(dst.Index(i), levels).SetString(p)
+					}
+
+					return nil
+				},
+			}, nil
+		}
+	}
+
+	return ValueField[string, T]{}, fmt.Errorf("split: invalid type: %s", f.dstType)
+}
+
+// MustParseInt is like ParseInt but panics if an error occurs.
+func (f Field[T]) MustParseInt(base int, bitSize int) ValueField[string, T] {
+	return must(f.ParseInt(base, bitSize))
+}
+
+// ParseInt scans into a string value, parses its value and sets the result into the fields destination.
+func (f Field[T]) ParseInt(base int, bitSize int) (ValueField[string, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[string, T]{}, fmt.Errorf("parse int: invalid type: %s", f.dstType)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := strconv.ParseInt(src, base, bitSize)
+				if err != nil {
+					return err
+				}
+
+				dst.SetInt(val)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
+// MustParseUint is like ParseUint but panics if an error occurs.
+func (f Field[T]) MustParseUint(base int, bitSize int) ValueField[string, T] {
+	return must(f.ParseUint(base, bitSize))
+}
+
+// ParseUint scans into a string value, parses its value and sets the result into the fields destination.
+func (f Field[T]) ParseUint(base int, bitSize int) (ValueField[string, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[string, T]{}, fmt.Errorf("parse uint: invalid type: %s", f.dstType)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := strconv.ParseUint(src, base, bitSize)
+				if err != nil {
+					return err
+				}
+
+				dst.SetUint(val)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
+// MustParseFloat is like ParseFloat but panics if an error occurs.
+func (f Field[T]) MustParseFloat(bitSize int) ValueField[string, T] {
+	return must(f.ParseFloat(bitSize))
+}
+
+// ParseFloat scans into a string value, parses its value and sets the result into the fields destination.
+func (f Field[T]) ParseFloat(bitSize int) (ValueField[string, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[string, T]{}, fmt.Errorf("parse float: invalid type: %s", f.dstType)
+	case reflect.Float32, reflect.Float64:
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := strconv.ParseFloat(src, bitSize)
+				if err != nil {
+					return err
+				}
+
+				dst.SetFloat(val)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
+// MustParseComplex is like ParseComplex but panics if an error occurs.
+func (f Field[T]) MustParseComplex(bitSize int) ValueField[string, T] {
+	return must(f.ParseComplex(bitSize))
+}
+
+// ParseComplex scans into a string value, parses its value and sets the result into the fields destination.
+func (f Field[T]) ParseComplex(bitSize int) (ValueField[string, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[string, T]{}, fmt.Errorf("parse complex: invalid type: %s", f.dstType)
+	case reflect.Complex128, reflect.Complex64:
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := strconv.ParseComplex(src, bitSize)
+				if err != nil {
+					return err
+				}
+
+				dst.SetComplex(val)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
+// MustParseBool is like ParseBool but panics if an error occurs.
+func (f Field[T]) MustParseBool() ValueField[string, T] {
+	return must(f.ParseBool())
+}
+
+// ParseBool scans into a string value, parses its value and sets the result into the fields destination.
+func (f Field[T]) ParseBool() (ValueField[string, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[string, T]{}, fmt.Errorf("parse bool: invalid type: %s", f.dstType)
+	case reflect.Bool:
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := strconv.ParseBool(src)
+				if err != nil {
+					return err
+				}
+
+				dst.SetBool(val)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
+// MustParseTime is like ParseTime but panics if an error occurs.
+func (f Field[T]) MustParseTime(layout string) ValueField[string, T] {
+	return must(f.ParseTime(layout))
+}
+
+// ParseTime scans into a string value, parses its value and sets the result into the fields destination.
+func (f Field[T]) ParseTime(layout string) (ValueField[string, T], error) {
+	if f.dstType == timeType {
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := time.Parse(layout, src)
+				if err != nil {
+					return err
+				}
+
+				dst.Set(reflect.ValueOf(val))
+
+				return nil
+			},
+		}, nil
+	}
+
+	if timeType.ConvertibleTo(f.dstType) {
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := time.Parse(layout, src)
+				if err != nil {
+					return err
+				}
+
+				dst.Set(reflect.ValueOf(val).Convert(f.dstType))
+
+				return nil
+			},
+		}, nil
+	}
+
+	return ValueField[string, T]{}, fmt.Errorf("parse time: invalid type: %s", f.dstType)
+}
+
+// MustParseTimeInLocation is like ParseTimeInLocation but panics if an error occurs.
+func (f Field[T]) MustParseTimeInLocation(layout string, loc *time.Location) ValueField[string, T] {
+	return must(f.ParseTimeInLocation(layout, loc))
+}
+
+// ParseTimeInLocation scans into a string value, parses its value and sets the result into the fields destination.
+func (f Field[T]) ParseTimeInLocation(layout string, loc *time.Location) (ValueField[string, T], error) {
+	if f.dstType == timeType {
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := time.ParseInLocation(layout, src, loc)
+				if err != nil {
+					return err
+				}
+
+				dst.Set(reflect.ValueOf(val))
+
+				return nil
+			},
+		}, nil
+	}
+
+	if timeType.ConvertibleTo(f.dstType) {
+		return ValueField[string, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src string) error {
+				val, err := time.ParseInLocation(layout, src, loc)
+				if err != nil {
+					return err
+				}
+
+				dst.Set(reflect.ValueOf(val).Convert(f.dstType))
+
+				return nil
+			},
+		}, nil
+	}
+
+	return ValueField[string, T]{}, fmt.Errorf("parse time in location: invalid type: %s", f.dstType)
+}
+
+// UnmarshalJSON scans into a []byte value, unmarshals its value into the fields destination.
+//
+//nolint:govet
+func (f Field[T]) UnmarshalJSON() ValueField[[]byte, T] {
+	return ValueField[[]byte, T]{
+		nullable:     f.nullable,
+		indices:      f.indices,
+		defaultValue: nil,
+		set: func(dst reflect.Value, src []byte) error {
+			return json.Unmarshal(src, dst.Addr().Interface())
+		},
+	}
+}
+
+// MustUnmarshalText is like UnmarshalText but panics if an error occurs.
+func (f Field[T]) MustUnmarshalText() ValueField[[]byte, T] {
+	return must(f.UnmarshalText())
+}
+
+// UnmarshalText scans into a []byte value, unmarshals its value into the fields destination.
+func (f Field[T]) UnmarshalText() (ValueField[[]byte, T], error) {
+	if !reflect.PointerTo(f.dstType).Implements(textUnmarshalerType) {
+		return ValueField[[]byte, T]{}, fmt.Errorf("unmarshal text: invalid type: %s", f.dstType)
+	}
+
+	return ValueField[[]byte, T]{
+		nullable:     f.nullable,
+		indices:      f.indices,
+		defaultValue: nil,
+		set: func(dst reflect.Value, src []byte) error {
+			//nolint:forcetypeassert
+			return dst.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(src)
+		},
+	}, nil
+}
+
+// MustUnmarshalBinary is like UnmarshalBinary but panics if an error occurs.
+func (f Field[T]) MustUnmarshalBinary() ValueField[[]byte, T] {
+	return must(f.UnmarshalBinary())
+}
+
+// UnmarshalBinary scans into a []byte value, unmarshals its value into the fields destination.
+func (f Field[T]) UnmarshalBinary() (ValueField[[]byte, T], error) {
+	if !reflect.PointerTo(f.dstType).Implements(binaryUnmarshalerType) {
+		return ValueField[[]byte, T]{}, fmt.Errorf("unmarshal binary: invalid type: %s", f.dstType)
+	}
+
+	return ValueField[[]byte, T]{
+		nullable:     f.nullable,
+		indices:      f.indices,
+		defaultValue: nil,
+		set: func(dst reflect.Value, src []byte) error {
+			//nolint:forcetypeassert
+			return dst.Addr().Interface().(encoding.BinaryUnmarshaler).UnmarshalBinary(src)
+		},
+	}, nil
+}
+
+// Enum defines a string ↔ int mapping used by IntEnum and StringEnum transformations.
+type Enum struct {
+	String string
+	Int    int64
+}
+
+// MustIntEnum is like IntEnum but panics if an error occurs.
+func (f Field[T]) MustIntEnum(enums ...Enum) ValueField[string, T] {
+	return must(f.IntEnum(enums...))
+}
+
+// IntEnum scans into a string value and sets the corresponding int value to the fields destination.
+func (f Field[T]) IntEnum(enums ...Enum) (ValueField[string, T], error) {
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[string, T]{}, fmt.Errorf("int enum: invalid type: %s", f.dstType)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+	}
+
+	mapping := map[string]int64{}
+
+	for _, p := range enums {
+		mapping[p.String] = p.Int
+	}
+
+	return ValueField[string, T]{
+		nullable:     f.nullable,
+		indices:      f.indices,
+		defaultValue: nil,
+		set: func(dst reflect.Value, src string) error {
+			val, ok := mapping[src]
 			if !ok {
-				return invalid, fmt.Errorf("enum converter: invalid enum: %s", src)
+				return fmt.Errorf("int enum: invalid value: %v", src)
 			}
 
-			return conv(value)
-		}, nil
-	}, nil
-}
+			dst.SetInt(val)
 
-func Cut(sep string, converters ...Converter) Converter {
-	converter := Chain(converters...)
-
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		srcType, convert, err := converter(dstType.Elem())
-		if err != nil {
-			return nil, nil, fmt.Errorf("cut converter: %w", err)
-		}
-
-		assign, err := assigner(srcType, stringType)
-		if err != nil {
-			return nil, nil, fmt.Errorf("cut converter: %w", err)
-		}
-
-		switch dstType.Kind() {
-		case reflect.Slice:
-			return stringType, func(src reflect.Value) (reflect.Value, error) {
-				str := src.String()
-				if str == "" {
-					return invalid, nil
-				}
-
-				var (
-					before, after, _ = strings.Cut(str, sep)
-					dst              = reflect.MakeSlice(dstType, 2, 2)
-					val              reflect.Value
-					err              error
-				)
-
-				val, err = convert(reflect.ValueOf(before))
-				if err != nil {
-					return invalid, fmt.Errorf("cut converter: %w", err)
-				}
-
-				if err = assign(dst.Index(0), val); err != nil {
-					return invalid, err
-				}
-
-				val, err = convert(reflect.ValueOf(after))
-				if err != nil {
-					return invalid, fmt.Errorf("cut converter: %w", err)
-				}
-
-				if err = assign(dst.Index(1), val); err != nil {
-					return invalid, err
-				}
-
-				return dst, nil
-			}, nil
-		case reflect.Array:
-			if dstType.Len() < 2 {
-				return nil, nil, fmt.Errorf("cut converter: invalid type: %s", dstType)
-			}
-
-			return stringType, func(src reflect.Value) (reflect.Value, error) {
-				str := src.String()
-				if str == "" {
-					return invalid, nil
-				}
-
-				var (
-					before, after, _ = strings.Cut(str, sep)
-					dst              = reflect.New(dstType).Elem()
-					val              reflect.Value
-					err              error
-				)
-
-				val, err = convert(reflect.ValueOf(before))
-				if err != nil {
-					return invalid, fmt.Errorf("cut converter: %w", err)
-				}
-
-				if err = assign(dst.Index(0), val); err != nil {
-					return invalid, err
-				}
-
-				val, err = convert(reflect.ValueOf(after))
-				if err != nil {
-					return invalid, fmt.Errorf("cut converter: %w", err)
-				}
-
-				if err = assign(dst.Index(1), val); err != nil {
-					return invalid, err
-				}
-
-				return dst, nil
-			}, nil
-		default:
-			return nil, nil, fmt.Errorf("split converter: invalid dst type: %s", dstType)
-		}
-	}
-}
-
-func Split(sep string, converters ...Converter) Converter {
-	converter := Chain(converters...)
-
-	return func(dstType reflect.Type) (reflect.Type, Convert, error) {
-		srcType, convert, err := converter(dstType.Elem())
-		if err != nil {
-			return nil, nil, fmt.Errorf("split converter: %w", err)
-		}
-
-		assign, err := assigner(srcType, stringType)
-		if err != nil {
-			return nil, nil, fmt.Errorf("split converter: %w", err)
-		}
-
-		switch dstType.Kind() {
-		case reflect.Slice:
-			return stringType, func(src reflect.Value) (reflect.Value, error) {
-				str := src.String()
-				if str == "" {
-					return invalid, nil
-				}
-
-				var (
-					split = strings.Split(str, sep)
-					dst   = reflect.MakeSlice(dstType, len(split), len(split))
-					val   reflect.Value
-					err   error
-				)
-
-				for i, each := range split {
-					val, err = convert(reflect.ValueOf(each))
-					if err != nil {
-						return invalid, fmt.Errorf("split converter: %w", err)
-					}
-
-					if err = assign(dst.Index(i), val); err != nil {
-						return invalid, fmt.Errorf("split converter: %w", err)
-					}
-				}
-
-				return dst, nil
-			}, nil
-		case reflect.Array:
-			return stringType, func(src reflect.Value) (reflect.Value, error) {
-				str := src.String()
-				if str == "" {
-					return invalid, nil
-				}
-
-				var (
-					split = strings.Split(str, sep)
-					dst   = reflect.New(dstType).Elem()
-					val   reflect.Value
-					err   error
-				)
-
-				if len(split) > dstType.Len() {
-					return invalid, fmt.Errorf("split converter: too many values for %s", dstType)
-				}
-
-				for i, each := range split {
-					val, err = convert(reflect.ValueOf(each))
-					if err != nil {
-						return invalid, fmt.Errorf("split converter: %w", err)
-					}
-
-					if err = assign(dst.Index(i), val); err != nil {
-						return invalid, fmt.Errorf("split converter: %w", err)
-					}
-				}
-
-				return dst, nil
-			}, nil
-		default:
-			return nil, nil, fmt.Errorf("split converter: invalid dst type: %s", dstType)
-		}
-	}
-}
-
-func assigner(dstType, srcType reflect.Type) (func(dst, src reflect.Value) error, error) {
-	conv, err := autoConverter(dstType, srcType)
-	if err != nil {
-		return nil, err
-	}
-
-	return func(dst, src reflect.Value) error {
-		v, err := conv(src)
-		if err != nil {
-			return err
-		}
-
-		if !v.IsValid() {
 			return nil
-		}
-
-		dst.Set(v)
-
-		return nil
+		},
 	}, nil
 }
 
-func derefType(t reflect.Type) (reflect.Type, int) {
-	var levels int
-
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-		levels++
-	}
-
-	return t, levels
+// MustStringEnum is like StringEnum but panics if an error occurs.
+func (f Field[T]) MustStringEnum(enums ...Enum) ValueField[int64, T] {
+	return must(f.StringEnum(enums...))
 }
 
-func derefValue(v reflect.Value, levels int) reflect.Value {
-	for range levels {
-		if !v.IsValid() || v.Kind() != reflect.Pointer {
-			return invalid
-		}
-
-		v = v.Elem()
+// StringEnum scans into a int value and sets the corresponding string value to the fields destination.
+func (f Field[T]) StringEnum(enums ...Enum) (ValueField[int64, T], error) {
+	if f.dstType.Kind() != reflect.String {
+		return ValueField[int64, T]{}, fmt.Errorf("string enum: invalid type: %s", f.dstType)
 	}
 
-	return v
-}
+	mapping := map[int64]string{}
 
-func refValue(v reflect.Value, levels int) reflect.Value {
-	for range levels {
-		if !v.IsValid() {
-			return invalid
-		}
-
-		ptr := reflect.New(v.Type())
-		ptr.Elem().Set(v)
-		v = ptr
+	for _, p := range enums {
+		mapping[p.Int] = p.String
 	}
 
-	return v
-}
-
-func autoConverter(dstType, srcType reflect.Type) (Convert, error) {
-	if dstType.Kind() == reflect.Pointer {
-		elem, levels := derefType(dstType)
-
-		conv, err := autoConverter(elem, srcType)
-		if err != nil {
-			return nil, err
-		}
-
-		return func(src reflect.Value) (reflect.Value, error) {
-			var err error
-
-			src, err = conv(src)
-			if err != nil {
-				return invalid, err
+	return ValueField[int64, T]{
+		nullable:     f.nullable,
+		indices:      f.indices,
+		defaultValue: nil,
+		set: func(dst reflect.Value, src int64) error {
+			val, ok := mapping[src]
+			if !ok {
+				return fmt.Errorf("string enum: invalid value: %v", src)
 			}
 
-			return refValue(src, levels), nil
-		}, nil
-	}
+			dst.SetString(val)
 
-	if srcType.Kind() == reflect.Pointer {
-		srcType, levels := derefType(srcType)
+			return nil
+		},
+	}, nil
+}
 
-		convert, err := autoConverter(dstType, srcType)
-		if err != nil {
-			return nil, err
-		}
+// ValueField implements the Scanner interface.
+type ValueField[S, T any] struct {
+	nullable     bool
+	indices      []int
+	defaultValue *S
+	set          func(dst reflect.Value, src S) error
+}
 
-		return func(src reflect.Value) (reflect.Value, error) {
-			src = derefValue(src, levels)
-			if !src.IsValid() {
-				return invalid, nil
+// Scan returns a destination and a function to assign the scanned value to a struct field.
+func (f ValueField[S, T]) Scan() (any, func(*T) error) {
+	if f.nullable {
+		var src sql.Null[S]
+
+		return &src, func(t *T) error {
+			if !src.Valid {
+				if f.defaultValue != nil {
+					return f.set(access(t, f.indices), *f.defaultValue)
+				}
+
+				return nil
 			}
 
-			return convert(src)
-		}, nil
+			return f.set(access(t, f.indices), src.V)
+		}
 	}
 
-	if srcType.AssignableTo(dstType) {
-		return func(f reflect.Value) (reflect.Value, error) {
-			return f, nil
-		}, nil
-	}
+	var src S
 
-	if srcType.ConvertibleTo(dstType) {
-		return func(f reflect.Value) (reflect.Value, error) {
-			return f.Convert(dstType), nil
-		}, nil
+	return &src, func(t *T) error {
+		return f.set(access(t, f.indices), src)
 	}
+}
 
-	return nil, fmt.Errorf("value of type %s cannot be converted to type %s", srcType, dstType)
+// Nullable marks the field as nullable, allowing it to accept NULL values.
+func (f ValueField[S, T]) Nullable() ValueField[S, T] {
+	f.nullable = true
+
+	return f
+}
+
+// Default sets a fallback value that is used if the scanned value is NULL.
+func (f ValueField[S, T]) Default(value S) ValueField[S, T] {
+	f.defaultValue = &value
+	f.nullable = true
+
+	return f
 }
 
 func combineErrs(err1, err2 error) error {
@@ -955,4 +1008,42 @@ func combineErrs(err1, err2 error) error {
 	}
 
 	return errors.Join(err1, err2)
+}
+
+func must[T any](t T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+
+	return t
+}
+
+//nolint:gochecknoglobals
+var (
+	byteSliceType         = reflect.TypeFor[[]byte]()
+	timeType              = reflect.TypeFor[time.Time]()
+	textUnmarshalerType   = reflect.TypeFor[encoding.TextUnmarshaler]()
+	binaryUnmarshalerType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
+	stringSliceType       = reflect.TypeFor[[]string]()
+)
+
+func indirections(t reflect.Type) (int, reflect.Type) {
+	var levels int
+
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+		levels++
+	}
+
+	return levels, t
+}
+
+func deref(v reflect.Value, levels int) reflect.Value {
+	for range levels {
+		v.Set(reflect.New(v.Type().Elem()))
+
+		v = v.Elem()
+	}
+
+	return v
 }

@@ -10,15 +10,10 @@ linters:
     - varnamelen
     - revive
     - mnd
-    - lll
     - ireturn
-    - gocognit
-    - gochecknoglobals
-    - funlen
-    - forcetypeassert
-    - exhaustive
     - err113
-    - cyclop
+    - exhaustive
+    - lll
 
   exclusions:
     paths-except:
