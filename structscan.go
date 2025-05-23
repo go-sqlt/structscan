@@ -264,6 +264,286 @@ func (s Struct[T]) fillSchema(indices []int, path string, t reflect.Type) {
 	}
 }
 
+func (s Struct[T]) Scan() (any, func(*T) error) {
+	var src T
+
+	return &src, func(t *T) error {
+		*t = src
+
+		return nil
+	}
+}
+
+func (s Struct[T]) Path(path string) (Field[T], error) {
+	f, ok := s[path]
+	if !ok {
+		return Field[T]{}, fmt.Errorf("field not found: %s", path)
+	}
+
+	return f, nil
+}
+
+func (s Struct[T]) MustNullable(path string) Field[T] {
+	return must(s.Nullable(path))
+}
+
+func (s Struct[T]) Nullable(path string) (Field[T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return Field[T]{}, err
+	}
+
+	return f.Nullable(), nil
+}
+
+func (s Struct[T]) MustString(path string) ValueField[string, T] {
+	return must(s.String(path))
+}
+
+func (s Struct[T]) String(path string) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.String()
+}
+
+func (s Struct[T]) MustInt(path string) ValueField[int64, T] {
+	return must(s.Int(path))
+}
+
+func (s Struct[T]) Int(path string) (ValueField[int64, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[int64, T]{}, err
+	}
+
+	return f.Int()
+}
+
+func (s Struct[T]) MustFloat(path string) ValueField[float64, T] {
+	return must(s.Float(path))
+}
+
+func (s Struct[T]) Float(path string) (ValueField[float64, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[float64, T]{}, err
+	}
+
+	return f.Float()
+}
+
+func (s Struct[T]) MustBool(path string) ValueField[bool, T] {
+	return must(s.Bool(path))
+}
+
+func (s Struct[T]) Bool(path string) (ValueField[bool, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[bool, T]{}, err
+	}
+
+	return f.Bool()
+}
+
+func (s Struct[T]) MustBytes(path string) ValueField[[]byte, T] {
+	return must(s.Bytes(path))
+}
+
+func (s Struct[T]) Bytes(path string) (ValueField[[]byte, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, err
+	}
+
+	return f.Bytes()
+}
+
+func (s Struct[T]) MustTime(path string) ValueField[time.Time, T] {
+	return must(s.Time(path))
+}
+
+func (s Struct[T]) Time(path string) (ValueField[time.Time, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[time.Time, T]{}, err
+	}
+
+	return f.Time()
+}
+
+func (s Struct[T]) MustSplit(path string, sep string) ValueField[string, T] {
+	return must(s.Split(path, sep))
+}
+
+func (s Struct[T]) Split(path string, sep string) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.Split(sep)
+}
+
+func (s Struct[T]) MustParseInt(path string, base int, bitSize int) ValueField[string, T] {
+	return must(s.ParseInt(path, base, bitSize))
+}
+
+func (s Struct[T]) ParseInt(path string, base int, bitSize int) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.ParseInt(base, bitSize)
+}
+
+func (s Struct[T]) MustParseUint(path string, base int, bitSize int) ValueField[string, T] {
+	return must(s.ParseUint(path, base, bitSize))
+}
+
+func (s Struct[T]) ParseUint(path string, base int, bitSize int) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.ParseUint(base, bitSize)
+}
+
+func (s Struct[T]) MustParseFloat(path string, bitSize int) ValueField[string, T] {
+	return must(s.ParseFloat(path, bitSize))
+}
+
+func (s Struct[T]) ParseFloat(path string, bitSize int) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.ParseFloat(bitSize)
+}
+
+func (s Struct[T]) MustParseComplex(path string, bitSize int) ValueField[string, T] {
+	return must(s.ParseComplex(path, bitSize))
+}
+
+func (s Struct[T]) ParseComplex(path string, bitSize int) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.ParseComplex(bitSize)
+}
+
+func (s Struct[T]) MustParseBool(path string) ValueField[string, T] {
+	return must(s.ParseBool(path))
+}
+
+func (s Struct[T]) ParseBool(path string) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.ParseBool()
+}
+
+func (s Struct[T]) MustParseTime(path string, layout string) ValueField[string, T] {
+	return must(s.ParseTime(path, layout))
+}
+
+func (s Struct[T]) ParseTime(path string, layout string) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.ParseTime(layout)
+}
+
+func (s Struct[T]) MustParseTimeInLocation(path string, layout string, loc *time.Location) ValueField[string, T] {
+	return must(s.ParseTimeInLocation(path, layout, loc))
+}
+
+func (s Struct[T]) ParseTimeInLocation(path string, layout string, loc *time.Location) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.ParseTimeInLocation(layout, loc)
+}
+
+func (s Struct[T]) MustUnmarshalJSON(path string) ValueField[[]byte, T] {
+	return must(s.UnmarshalJSON(path))
+}
+
+//nolint:govet
+func (s Struct[T]) UnmarshalJSON(path string) (ValueField[[]byte, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, err
+	}
+
+	return f.UnmarshalJSON(), nil
+}
+
+func (s Struct[T]) MustUnmarshalText(path string) ValueField[[]byte, T] {
+	return must(s.UnmarshalText(path))
+}
+
+func (s Struct[T]) UnmarshalText(path string) (ValueField[[]byte, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, err
+	}
+
+	return f.UnmarshalText()
+}
+
+func (s Struct[T]) MustUnmarshalBinary(path string) ValueField[[]byte, T] {
+	return must(s.UnmarshalBinary(path))
+}
+
+func (s Struct[T]) UnmarshalBinary(path string) (ValueField[[]byte, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, err
+	}
+
+	return f.UnmarshalBinary()
+}
+
+func (s Struct[T]) MustIntEnum(path string, enums ...Enum) ValueField[string, T] {
+	return must(s.IntEnum(path, enums...))
+}
+
+func (s Struct[T]) IntEnum(path string, enums ...Enum) (ValueField[string, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[string, T]{}, err
+	}
+
+	return f.IntEnum(enums...)
+}
+
+func (s Struct[T]) MustStringEnum(path string, enums ...Enum) ValueField[int64, T] {
+	return must(s.StringEnum(path, enums...))
+}
+
+func (s Struct[T]) StringEnum(path string, enums ...Enum) (ValueField[int64, T], error) {
+	f, err := s.Path(path)
+	if err != nil {
+		return ValueField[int64, T]{}, err
+	}
+
+	return f.StringEnum(enums...)
+}
+
 // access dereferences pointer chains and accesses the target field on a struct T using its field indices.
 func access[T any](t *T, indices []int) reflect.Value {
 	dst := reflect.ValueOf(t).Elem()
@@ -501,8 +781,6 @@ func (f Field[T]) MustSplit(sep string) ValueField[string, T] {
 
 // Split parses a delimited string and assigns the parts to a slice or array field.
 // Supports slices and fixed-length arrays of strings.
-//
-//nolint:cyclop,funlen
 func (f Field[T]) Split(sep string) (ValueField[string, T], error) {
 	if f.dstType == stringSliceType {
 		return ValueField[string, T]{

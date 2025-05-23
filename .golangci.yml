@@ -14,6 +14,8 @@ linters:
     - err113
     - exhaustive
     - lll
+    - cyclop
+    - funlen
 
   exclusions:
     paths-except:

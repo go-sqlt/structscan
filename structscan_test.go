@@ -18,28 +18,6 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
-// func bigFromString(s string) *big.Int {
-// 	i := new(big.Int)
-// 	i.SetString(s, 10)
-// 	return i
-// }
-
-// func mustURL(raw string) *url.URL {
-// 	u, err := url.Parse(raw)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	return u
-// }
-
-// func mustParse(date string) time.Time {
-// 	t, err := time.Parse(time.DateOnly, date)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	return t
-// }
-
 func TestString(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -62,8 +40,8 @@ func TestString(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema["Value"].MustString(),
-		schema["ValueNullable"].MustString().Nullable(),
+		schema.MustString("Value"),
+		schema.MustNullable("ValueNullable").MustString(),
 		schema["ValueNullableNull"].MustString().Nullable(),
 	)
 
@@ -113,7 +91,7 @@ func TestInt(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema["Value"].MustInt(),
+		schema.MustInt("Value"),
 		schema["ValueNullable"].MustInt().Nullable(),
 		schema["ValueNullableNull"].MustInt().Nullable(),
 	)
@@ -164,7 +142,7 @@ func TestFloat(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema["Value"].MustFloat(),
+		schema.MustFloat("Value"),
 		schema["ValueNullable"].MustFloat().Nullable(),
 		schema["ValueNullableNull"].MustFloat().Nullable(),
 	)
@@ -212,7 +190,7 @@ func TestBool(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema["Value"].MustBool(),
+		schema.MustBool("Value"),
 		schema["ValueNullable"].MustBool().Nullable(),
 		schema["ValueNullableNull"].MustBool().Nullable(),
 	)
@@ -262,7 +240,7 @@ func TestTime(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema["Value"].MustTime(),
+		schema.MustTime("Value"),
 		schema["ValueNullable"].MustTime().Nullable(),
 		schema["ValueNullableNull"].MustTime().Nullable(),
 	)
@@ -324,7 +302,7 @@ func TestBytes(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema["Value"].MustBytes(),
+		schema.MustBytes("Value"),
 		schema["ValueNullable"].MustBytes().Nullable(),
 		schema["ValueNullableNull"].MustBytes().Nullable(),
 	)
@@ -372,7 +350,7 @@ func TestSplit(t *testing.T) {
 		schema["Direct"].MustSplit(","),
 		schema["Nullable"].Nullable().MustSplit(","),
 		schema["NullableNull"].MustSplit(",").Nullable(),
-		schema["Value"].MustSplit(","),
+		schema.MustSplit("Value", ","),
 		schema["ValueNullable"].Nullable().MustSplit(","),
 		schema["ValueNullableNull"].MustSplit(",").Nullable(),
 	)
@@ -420,7 +398,7 @@ func TestParseInt(t *testing.T) {
 		schema["Direct"].MustParseInt(10, 64),
 		schema["Nullable"].Nullable().MustParseInt(10, 32),
 		schema["NullableNull"].MustParseInt(10, 16).Nullable(),
-		schema["Value"].MustParseInt(10, 8),
+		schema.MustParseInt("Value", 10, 8),
 		schema["ValueNullable"].MustParseInt(10, 64).Nullable(),
 		schema["ValueNullableNull"].Nullable().MustParseInt(10, 64),
 	)
@@ -471,7 +449,7 @@ func TestParseUint(t *testing.T) {
 		schema["Direct"].MustParseUint(10, 64),
 		schema["Nullable"].Nullable().MustParseUint(10, 32),
 		schema["NullableNull"].MustParseUint(10, 16).Nullable(),
-		schema["Value"].MustParseUint(10, 8),
+		schema.MustParseUint("Value", 10, 8),
 		schema["ValueNullable"].MustParseUint(10, 64).Nullable(),
 		schema["ValueNullableNull"].Nullable().MustParseUint(10, 64),
 	)
@@ -522,7 +500,7 @@ func TestParseFloat(t *testing.T) {
 		schema["Direct"].MustParseFloat(64),
 		schema["Nullable"].Nullable().MustParseFloat(64),
 		schema["NullableNull"].Nullable().MustParseFloat(64),
-		schema["Value"].MustParseFloat(64),
+		schema.MustParseFloat("Value", 64),
 		schema["ValueNullable"].MustParseFloat(64).Nullable(),
 		schema["ValueNullableNull"].MustParseFloat(64).Nullable(),
 	)
@@ -570,7 +548,7 @@ func TestParseComplex(t *testing.T) {
 		schema["Direct"].MustParseComplex(128),
 		schema["Nullable"].Nullable().MustParseComplex(128),
 		schema["NullableNull"].Nullable().MustParseComplex(64),
-		schema["Value"].MustParseComplex(64),
+		schema.MustParseComplex("Value", 64),
 		schema["ValueNullable"].MustParseComplex(128).Nullable(),
 		schema["ValueNullableNull"].MustParseComplex(128).Nullable(),
 	)
@@ -618,7 +596,7 @@ func TestParseBool(t *testing.T) {
 		schema["Direct"].MustParseBool(),
 		schema["Nullable"].Nullable().MustParseBool(),
 		schema["NullableNull"].Nullable().MustParseBool(),
-		schema["Value"].MustParseBool(),
+		schema.MustParseBool("Value"),
 		schema["ValueNullable"].MustParseBool().Nullable(),
 		schema["ValueNullableNull"].MustParseBool().Nullable(),
 	)
@@ -668,7 +646,7 @@ func TestParseTime(t *testing.T) {
 		schema["Direct"].MustParseTime(time.DateOnly),
 		schema["Nullable"].Nullable().MustParseTime(time.DateOnly),
 		schema["NullableNull"].Nullable().MustParseTime(time.DateOnly),
-		schema["Value"].MustParseTime(time.DateOnly),
+		schema.MustParseTime("Value", time.DateOnly),
 		schema["ValueNullable"].MustParseTime(time.DateOnly).Nullable(),
 		schema["ValueNullableNull"].MustParseTime(time.DateOnly).Nullable(),
 	)
@@ -723,7 +701,7 @@ func TestParseTimeInLocation(t *testing.T) {
 		schema["Direct"].MustParseTimeInLocation(time.DateOnly, time.UTC),
 		schema["Nullable"].Nullable().MustParseTimeInLocation(time.DateOnly, time.UTC),
 		schema["NullableNull"].Nullable().MustParseTimeInLocation(time.DateOnly, time.UTC),
-		schema["Value"].MustParseTimeInLocation(time.DateOnly, time.UTC),
+		schema.MustParseTimeInLocation("Value", time.DateOnly, time.UTC),
 		schema["ValueNullable"].MustParseTimeInLocation(time.DateOnly, time.UTC).Nullable(),
 		schema["ValueNullableNull"].MustParseTimeInLocation(time.DateOnly, time.UTC).Nullable(),
 	)
@@ -787,7 +765,7 @@ func TestStringEnum(t *testing.T) {
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
-		schema["Value"].MustStringEnum(
+		schema.MustStringEnum("Value",
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
@@ -855,7 +833,7 @@ func TestIntEnum(t *testing.T) {
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
-		schema["Value"].MustIntEnum(
+		schema.MustIntEnum("Value",
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
@@ -891,21 +869,19 @@ func TestIntEnum(t *testing.T) {
 }
 
 func TestUnmarshalJSON(t *testing.T) {
-	type T map[string]any
-
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	schema := structscan.New[T]()
+	schema := structscan.New[map[string]any]()
 
 	mapper := structscan.Map(
-		schema[""].UnmarshalJSON(),
+		schema.MustUnmarshalJSON(""),
 	)
 
-	expect := T{
+	expect := map[string]any{
 		"hello": "world",
 	}
 
@@ -922,29 +898,21 @@ func TestUnmarshalJSON(t *testing.T) {
 }
 
 func TestUnmarshalBinary(t *testing.T) {
-	type T struct {
-		URL *url.URL
-	}
-
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	schema := structscan.New[T]()
+	schema := structscan.New[*url.URL]()
 
 	mapper := structscan.Map(
-		schema["URL"].MustUnmarshalBinary(),
+		schema.MustUnmarshalBinary(""),
 	)
 
-	u, err := url.Parse("https://localhost:1234/path?query=true")
+	expect, err := url.Parse("https://localhost:1234/path?query=true")
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	expect := T{
-		URL: u,
 	}
 
 	rows, err := db.Query(`SELECT 'https://localhost:1234/path?query=true'`)
@@ -963,25 +931,19 @@ func TestUnmarshalBinary(t *testing.T) {
 }
 
 func TestUnmarshalText(t *testing.T) {
-	type T struct {
-		Big *big.Int
-	}
-
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 
-	schema := structscan.New[T]()
+	schema := structscan.New[*big.Int]()
 
 	mapper := structscan.Map(
-		schema["Big"].MustUnmarshalText(),
+		schema.MustUnmarshalText(""),
 	)
 
-	expect := T{
-		Big: big.NewInt(10),
-	}
+	expect := big.NewInt(10)
 
 	rows, err := db.Query(`SELECT '10'`)
 	if err != nil {
