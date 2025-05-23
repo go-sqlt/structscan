@@ -40,8 +40,8 @@ func TestString(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema.MustString("Value"),
-		schema.MustNullable("ValueNullable").MustString(),
+		schema["Value"].MustString(),
+		schema["ValueNullable"].MustString().Nullable(),
 		schema["ValueNullableNull"].MustString().Nullable(),
 	)
 
@@ -91,7 +91,7 @@ func TestInt(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema.MustInt("Value"),
+		schema["Value"].MustInt(),
 		schema["ValueNullable"].MustInt().Nullable(),
 		schema["ValueNullableNull"].MustInt().Nullable(),
 	)
@@ -142,7 +142,7 @@ func TestFloat(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema.MustFloat("Value"),
+		schema["Value"].MustFloat(),
 		schema["ValueNullable"].MustFloat().Nullable(),
 		schema["ValueNullableNull"].MustFloat().Nullable(),
 	)
@@ -190,7 +190,7 @@ func TestBool(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema.MustBool("Value"),
+		schema["Value"].MustBool(),
 		schema["ValueNullable"].MustBool().Nullable(),
 		schema["ValueNullableNull"].MustBool().Nullable(),
 	)
@@ -240,7 +240,7 @@ func TestTime(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema.MustTime("Value"),
+		schema["Value"].MustTime(),
 		schema["ValueNullable"].MustTime().Nullable(),
 		schema["ValueNullableNull"].MustTime().Nullable(),
 	)
@@ -302,7 +302,7 @@ func TestBytes(t *testing.T) {
 		schema["Direct"],
 		schema["Nullable"].Nullable(),
 		schema["NullableNull"].Nullable(),
-		schema.MustBytes("Value"),
+		schema["Value"].MustBytes(),
 		schema["ValueNullable"].MustBytes().Nullable(),
 		schema["ValueNullableNull"].MustBytes().Nullable(),
 	)
@@ -350,7 +350,7 @@ func TestSplit(t *testing.T) {
 		schema["Direct"].MustSplit(","),
 		schema["Nullable"].Nullable().MustSplit(","),
 		schema["NullableNull"].MustSplit(",").Nullable(),
-		schema.MustSplit("Value", ","),
+		schema["Value"].MustSplit(","),
 		schema["ValueNullable"].Nullable().MustSplit(","),
 		schema["ValueNullableNull"].MustSplit(",").Nullable(),
 	)
@@ -398,7 +398,7 @@ func TestParseInt(t *testing.T) {
 		schema["Direct"].MustParseInt(10, 64),
 		schema["Nullable"].Nullable().MustParseInt(10, 32),
 		schema["NullableNull"].MustParseInt(10, 16).Nullable(),
-		schema.MustParseInt("Value", 10, 8),
+		schema["Value"].MustParseInt(10, 8),
 		schema["ValueNullable"].MustParseInt(10, 64).Nullable(),
 		schema["ValueNullableNull"].Nullable().MustParseInt(10, 64),
 	)
@@ -449,7 +449,7 @@ func TestParseUint(t *testing.T) {
 		schema["Direct"].MustParseUint(10, 64),
 		schema["Nullable"].Nullable().MustParseUint(10, 32),
 		schema["NullableNull"].MustParseUint(10, 16).Nullable(),
-		schema.MustParseUint("Value", 10, 8),
+		schema["Value"].MustParseUint(10, 8),
 		schema["ValueNullable"].MustParseUint(10, 64).Nullable(),
 		schema["ValueNullableNull"].Nullable().MustParseUint(10, 64),
 	)
@@ -500,7 +500,7 @@ func TestParseFloat(t *testing.T) {
 		schema["Direct"].MustParseFloat(64),
 		schema["Nullable"].Nullable().MustParseFloat(64),
 		schema["NullableNull"].Nullable().MustParseFloat(64),
-		schema.MustParseFloat("Value", 64),
+		schema["Value"].MustParseFloat(64),
 		schema["ValueNullable"].MustParseFloat(64).Nullable(),
 		schema["ValueNullableNull"].MustParseFloat(64).Nullable(),
 	)
@@ -548,7 +548,7 @@ func TestParseComplex(t *testing.T) {
 		schema["Direct"].MustParseComplex(128),
 		schema["Nullable"].Nullable().MustParseComplex(128),
 		schema["NullableNull"].Nullable().MustParseComplex(64),
-		schema.MustParseComplex("Value", 64),
+		schema["Value"].MustParseComplex(64),
 		schema["ValueNullable"].MustParseComplex(128).Nullable(),
 		schema["ValueNullableNull"].MustParseComplex(128).Nullable(),
 	)
@@ -596,7 +596,7 @@ func TestParseBool(t *testing.T) {
 		schema["Direct"].MustParseBool(),
 		schema["Nullable"].Nullable().MustParseBool(),
 		schema["NullableNull"].Nullable().MustParseBool(),
-		schema.MustParseBool("Value"),
+		schema["Value"].MustParseBool(),
 		schema["ValueNullable"].MustParseBool().Nullable(),
 		schema["ValueNullableNull"].MustParseBool().Nullable(),
 	)
@@ -646,7 +646,7 @@ func TestParseTime(t *testing.T) {
 		schema["Direct"].MustParseTime(time.DateOnly),
 		schema["Nullable"].Nullable().MustParseTime(time.DateOnly),
 		schema["NullableNull"].Nullable().MustParseTime(time.DateOnly),
-		schema.MustParseTime("Value", time.DateOnly),
+		schema["Value"].MustParseTime(time.DateOnly),
 		schema["ValueNullable"].MustParseTime(time.DateOnly).Nullable(),
 		schema["ValueNullableNull"].MustParseTime(time.DateOnly).Nullable(),
 	)
@@ -701,7 +701,7 @@ func TestParseTimeInLocation(t *testing.T) {
 		schema["Direct"].MustParseTimeInLocation(time.DateOnly, time.UTC),
 		schema["Nullable"].Nullable().MustParseTimeInLocation(time.DateOnly, time.UTC),
 		schema["NullableNull"].Nullable().MustParseTimeInLocation(time.DateOnly, time.UTC),
-		schema.MustParseTimeInLocation("Value", time.DateOnly, time.UTC),
+		schema["Value"].MustParseTimeInLocation(time.DateOnly, time.UTC),
 		schema["ValueNullable"].MustParseTimeInLocation(time.DateOnly, time.UTC).Nullable(),
 		schema["ValueNullableNull"].MustParseTimeInLocation(time.DateOnly, time.UTC).Nullable(),
 	)
@@ -765,7 +765,7 @@ func TestStringEnum(t *testing.T) {
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
-		schema.MustStringEnum("Value",
+		schema["Value"].MustStringEnum(
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
@@ -833,7 +833,7 @@ func TestIntEnum(t *testing.T) {
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
-		schema.MustIntEnum("Value",
+		schema["Value"].MustIntEnum(
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
@@ -878,7 +878,7 @@ func TestUnmarshalJSON(t *testing.T) {
 	schema := structscan.New[map[string]any]()
 
 	mapper := structscan.Map(
-		schema.MustUnmarshalJSON(""),
+		schema[""].UnmarshalJSON(),
 	)
 
 	expect := map[string]any{
@@ -907,7 +907,7 @@ func TestUnmarshalBinary(t *testing.T) {
 	schema := structscan.New[*url.URL]()
 
 	mapper := structscan.Map(
-		schema.MustUnmarshalBinary(""),
+		schema[""].MustUnmarshalBinary(),
 	)
 
 	expect, err := url.Parse("https://localhost:1234/path?query=true")
@@ -940,7 +940,7 @@ func TestUnmarshalText(t *testing.T) {
 	schema := structscan.New[*big.Int]()
 
 	mapper := structscan.Map(
-		schema.MustUnmarshalText(""),
+		schema[""].MustUnmarshalText(),
 	)
 
 	expect := big.NewInt(10)
