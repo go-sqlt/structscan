@@ -3,7 +3,6 @@ package structscan_test
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"math/big"
 	"net/url"
 	"reflect"
@@ -32,17 +31,19 @@ func TestString(t *testing.T) {
 		Value             *string
 		ValueNullable     string
 		ValueNullableNull *string
+		Default           string
 	}
 
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"],
-		schema["Nullable"].Nullable(),
-		schema["NullableNull"].Nullable(),
-		schema["Value"].MustString(),
-		schema["ValueNullable"].MustString().Nullable(),
-		schema["ValueNullableNull"].MustString().Nullable(),
+		schema.MustField("Direct"),
+		schema.MustNullable("Nullable"),
+		schema.MustNullable("NullableNull"),
+		schema.MustString("Value"),
+		schema.MustString("ValueNullable").Nullable(),
+		schema.MustString("ValueNullableNull").Nullable(),
+		schema.MustDefaultString("Default", "default"),
 	)
 
 	expect := T{
@@ -52,9 +53,10 @@ func TestString(t *testing.T) {
 		Value:             ptr("hello"),
 		ValueNullable:     "hello",
 		ValueNullableNull: nil,
+		Default:           "default",
 	}
 
-	rows, err := db.Query("SELECT 'hello', 'hello', NULL, 'hello', 'hello', NULL")
+	rows, err := db.Query("SELECT 'hello', 'hello', NULL, 'hello', 'hello', NULL, NULL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,17 +85,19 @@ func TestInt(t *testing.T) {
 		Value             *int8
 		ValueNullable     int
 		ValueNullableNull *int64
+		Default           int64
 	}
 
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"],
-		schema["Nullable"].Nullable(),
-		schema["NullableNull"].Nullable(),
-		schema["Value"].MustInt(),
-		schema["ValueNullable"].MustInt().Nullable(),
-		schema["ValueNullableNull"].MustInt().Nullable(),
+		schema.MustField("Direct"),
+		schema.MustNullable("Nullable"),
+		schema.MustNullable("NullableNull"),
+		schema.MustInt("Value"),
+		schema.MustInt("ValueNullable").Nullable(),
+		schema.MustInt("ValueNullableNull").Nullable(),
+		schema.MustDefaultInt("Default", 10),
 	)
 
 	expect := T{
@@ -103,9 +107,64 @@ func TestInt(t *testing.T) {
 		Value:             ptr[int8](3),
 		ValueNullable:     4,
 		ValueNullableNull: nil,
+		Default:           10,
 	}
 
-	rows, err := db.Query("SELECT 1, 2, NULL, 3, 4, NULL")
+	rows, err := db.Query("SELECT 1, 2, NULL, 3, 4, NULL, NULL")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestUint(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	type T struct {
+		Direct            uint64
+		Nullable          *uint32
+		NullableNull      uint16
+		Value             *uint8
+		ValueNullable     uint
+		ValueNullableNull *uint64
+		Default           uint64
+	}
+
+	schema := structscan.New[T]()
+
+	mapper := structscan.Map(
+		schema.MustField("Direct"),
+		schema.MustNullable("Nullable"),
+		schema.MustNullable("NullableNull"),
+		schema.MustUint("Value"),
+		schema.MustUint("ValueNullable").Nullable(),
+		schema.MustUint("ValueNullableNull").Nullable(),
+		schema.MustDefaultUint("Default", 10),
+	)
+
+	expect := T{
+		Direct:            uint64(1),
+		Nullable:          ptr[uint32](2),
+		NullableNull:      0,
+		Value:             ptr[uint8](3),
+		ValueNullable:     uint(4),
+		ValueNullableNull: nil,
+		Default:           10,
+	}
+
+	rows, err := db.Query("SELECT 1, 2, NULL, 3, 4, NULL, NULL")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,17 +193,19 @@ func TestFloat(t *testing.T) {
 		Value             *float32
 		ValueNullable     float64
 		ValueNullableNull *float64
+		Default           float64
 	}
 
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"],
-		schema["Nullable"].Nullable(),
-		schema["NullableNull"].Nullable(),
-		schema["Value"].MustFloat(),
-		schema["ValueNullable"].MustFloat().Nullable(),
-		schema["ValueNullableNull"].MustFloat().Nullable(),
+		schema.MustField("Direct"),
+		schema.MustNullable("Nullable"),
+		schema.MustNullable("NullableNull"),
+		schema.MustFloat("Value"),
+		schema.MustFloat("ValueNullable").Nullable(),
+		schema.MustFloat("ValueNullableNull").Nullable(),
+		schema.MustDefaultFloat("Default", 1.23),
 	)
 
 	expect := T{
@@ -154,9 +215,10 @@ func TestFloat(t *testing.T) {
 		Value:             ptr[float32](3.45),
 		ValueNullable:     4.56,
 		ValueNullableNull: nil,
+		Default:           1.23,
 	}
 
-	row := db.QueryRow("SELECT 1.23, 2.34, NULL, 3.45, 4.56, NULL")
+	row := db.QueryRow("SELECT 1.23, 2.34, NULL, 3.45, 4.56, NULL, NULL")
 
 	result, err := mapper.Row(row)
 	if err != nil {
@@ -182,17 +244,19 @@ func TestBool(t *testing.T) {
 		Value             *bool
 		ValueNullable     bool
 		ValueNullableNull *bool
+		Default           bool
 	}
 
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"],
-		schema["Nullable"].Nullable(),
-		schema["NullableNull"].Nullable(),
-		schema["Value"].MustBool(),
-		schema["ValueNullable"].MustBool().Nullable(),
-		schema["ValueNullableNull"].MustBool().Nullable(),
+		schema.MustField("Direct"),
+		schema.MustNullable("Nullable"),
+		schema.MustNullable("NullableNull"),
+		schema.MustBool("Value"),
+		schema.MustBool("ValueNullable").Nullable(),
+		schema.MustBool("ValueNullableNull").Nullable(),
+		schema.MustDefaultBool("Default", true),
 	)
 
 	expect := T{
@@ -202,9 +266,10 @@ func TestBool(t *testing.T) {
 		Value:             ptr(false),
 		ValueNullable:     true,
 		ValueNullableNull: nil,
+		Default:           true,
 	}
 
-	row := db.QueryRow("SELECT true, false, NULL, false, true, NULL")
+	row := db.QueryRow("SELECT true, false, NULL, false, true, NULL, NULL")
 
 	result, err := mapper.Row(row)
 	if err != nil {
@@ -232,22 +297,23 @@ func TestTime(t *testing.T) {
 		Value             *MyTime
 		ValueNullable     time.Time
 		ValueNullableNull *time.Time
+		Default           time.Time
 	}
 
 	schema := structscan.New[T]()
 
-	mapper := structscan.Map(
-		schema["Direct"],
-		schema["Nullable"].Nullable(),
-		schema["NullableNull"].Nullable(),
-		schema["Value"].MustTime(),
-		schema["ValueNullable"].MustTime().Nullable(),
-		schema["ValueNullableNull"].MustTime().Nullable(),
-	)
-
 	time.Local = time.UTC
 	now := time.Now().UTC()
-	fmt.Println(now)
+
+	mapper := structscan.Map(
+		schema.MustField("Direct"),
+		schema.MustNullable("Nullable"),
+		schema.MustNullable("NullableNull"),
+		schema.MustTime("Value"),
+		schema.MustTime("ValueNullable").Nullable(),
+		schema.MustTime("ValueNullableNull").Nullable(),
+		schema.MustDefaultTime("Default", now),
+	)
 
 	expect := T{
 		Direct:            now,
@@ -256,6 +322,7 @@ func TestTime(t *testing.T) {
 		Value:             ptr(MyTime(now)),
 		ValueNullable:     now,
 		ValueNullableNull: nil,
+		Default:           now,
 	}
 
 	_, err = db.Exec("CREATE TABLE my_time ( value DATE )")
@@ -268,7 +335,7 @@ func TestTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	row := db.QueryRow("SELECT value, value, NULL, value, value, NULL FROM my_time")
+	row := db.QueryRow("SELECT value, value, NULL, value, value, NULL, NULL FROM my_time")
 
 	result, err := mapper.Row(row)
 	if err != nil {
@@ -299,12 +366,12 @@ func TestBytes(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"],
-		schema["Nullable"].Nullable(),
-		schema["NullableNull"].Nullable(),
-		schema["Value"].MustBytes(),
-		schema["ValueNullable"].MustBytes().Nullable(),
-		schema["ValueNullableNull"].MustBytes().Nullable(),
+		schema.MustField("Direct"),
+		schema.MustNullable("Nullable"),
+		schema.MustNullable("NullableNull"),
+		schema.MustBytes("Value"),
+		schema.MustBytes("ValueNullable").Nullable(),
+		schema.MustBytes("ValueNullableNull").Nullable(),
 	)
 
 	expect := T{
@@ -347,12 +414,12 @@ func TestSplit(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustSplit(","),
-		schema["Nullable"].Nullable().MustSplit(","),
-		schema["NullableNull"].MustSplit(",").Nullable(),
-		schema["Value"].MustSplit(","),
-		schema["ValueNullable"].Nullable().MustSplit(","),
-		schema["ValueNullableNull"].MustSplit(",").Nullable(),
+		schema.MustSplit("Direct", ","),
+		schema.MustSplit("Nullable", ",").Nullable(),
+		schema.MustSplit("NullableNull", ",").Nullable(),
+		schema.MustSplit("Value", ","),
+		schema.MustSplit("ValueNullable", ",").Nullable(),
+		schema.MustSplit("ValueNullableNull", ",").Nullable(),
 	)
 
 	expect := T{
@@ -395,12 +462,12 @@ func TestParseInt(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustParseInt(10, 64),
-		schema["Nullable"].Nullable().MustParseInt(10, 32),
-		schema["NullableNull"].MustParseInt(10, 16).Nullable(),
-		schema["Value"].MustParseInt(10, 8),
-		schema["ValueNullable"].MustParseInt(10, 64).Nullable(),
-		schema["ValueNullableNull"].Nullable().MustParseInt(10, 64),
+		schema.MustParseInt("Direct", 10, 64),
+		schema.MustParseInt("Nullable", 10, 32).Nullable(),
+		schema.MustParseInt("NullableNull", 10, 16).Nullable(),
+		schema.MustParseInt("Value", 10, 8),
+		schema.MustParseInt("ValueNullable", 10, 64).Nullable(),
+		schema.MustParseInt("ValueNullableNull", 10, 64).Nullable(),
 	)
 
 	expect := T{
@@ -446,12 +513,12 @@ func TestParseUint(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustParseUint(10, 64),
-		schema["Nullable"].Nullable().MustParseUint(10, 32),
-		schema["NullableNull"].MustParseUint(10, 16).Nullable(),
-		schema["Value"].MustParseUint(10, 8),
-		schema["ValueNullable"].MustParseUint(10, 64).Nullable(),
-		schema["ValueNullableNull"].Nullable().MustParseUint(10, 64),
+		schema.MustParseUint("Direct", 10, 64),
+		schema.MustParseUint("Nullable", 10, 32).Nullable(),
+		schema.MustParseUint("NullableNull", 10, 16).Nullable(),
+		schema.MustParseUint("Value", 10, 8),
+		schema.MustParseUint("ValueNullable", 10, 64).Nullable(),
+		schema.MustParseUint("ValueNullableNull", 10, 64).Nullable(),
 	)
 
 	expect := T{
@@ -497,12 +564,12 @@ func TestParseFloat(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustParseFloat(64),
-		schema["Nullable"].Nullable().MustParseFloat(64),
-		schema["NullableNull"].Nullable().MustParseFloat(64),
-		schema["Value"].MustParseFloat(64),
-		schema["ValueNullable"].MustParseFloat(64).Nullable(),
-		schema["ValueNullableNull"].MustParseFloat(64).Nullable(),
+		schema.MustParseFloat("Direct", 64),
+		schema.MustParseFloat("Nullable", 64).Nullable(),
+		schema.MustParseFloat("NullableNull", 64).Nullable(),
+		schema.MustParseFloat("Value", 64),
+		schema.MustParseFloat("ValueNullable", 64).Nullable(),
+		schema.MustParseFloat("ValueNullableNull", 64).Nullable(),
 	)
 
 	expect := T{
@@ -545,12 +612,12 @@ func TestParseComplex(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustParseComplex(128),
-		schema["Nullable"].Nullable().MustParseComplex(128),
-		schema["NullableNull"].Nullable().MustParseComplex(64),
-		schema["Value"].MustParseComplex(64),
-		schema["ValueNullable"].MustParseComplex(128).Nullable(),
-		schema["ValueNullableNull"].MustParseComplex(128).Nullable(),
+		schema.MustParseComplex("Direct", 128),
+		schema.MustParseComplex("Nullable", 128).Nullable(),
+		schema.MustParseComplex("NullableNull", 64).Nullable(),
+		schema.MustParseComplex("Value", 64),
+		schema.MustParseComplex("ValueNullable", 128).Nullable(),
+		schema.MustParseComplex("ValueNullableNull", 128).Nullable(),
 	)
 
 	expect := T{
@@ -593,12 +660,12 @@ func TestParseBool(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustParseBool(),
-		schema["Nullable"].Nullable().MustParseBool(),
-		schema["NullableNull"].Nullable().MustParseBool(),
-		schema["Value"].MustParseBool(),
-		schema["ValueNullable"].MustParseBool().Nullable(),
-		schema["ValueNullableNull"].MustParseBool().Nullable(),
+		schema.MustParseBool("Direct"),
+		schema.MustParseBool("Nullable").Nullable(),
+		schema.MustParseBool("NullableNull").Nullable(),
+		schema.MustParseBool("Value"),
+		schema.MustParseBool("ValueNullable").Nullable(),
+		schema.MustParseBool("ValueNullableNull").Nullable(),
 	)
 
 	expect := T{
@@ -643,12 +710,12 @@ func TestParseTime(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustParseTime(time.DateOnly),
-		schema["Nullable"].Nullable().MustParseTime(time.DateOnly),
-		schema["NullableNull"].Nullable().MustParseTime(time.DateOnly),
-		schema["Value"].MustParseTime(time.DateOnly),
-		schema["ValueNullable"].MustParseTime(time.DateOnly).Nullable(),
-		schema["ValueNullableNull"].MustParseTime(time.DateOnly).Nullable(),
+		schema.MustParseTime("Direct", time.DateOnly),
+		schema.MustParseTime("Nullable", time.DateOnly).Nullable(),
+		schema.MustParseTime("NullableNull", time.DateOnly).Nullable(),
+		schema.MustParseTime("Value", time.DateOnly),
+		schema.MustParseTime("ValueNullable", time.DateOnly).Nullable(),
+		schema.MustParseTime("ValueNullableNull", time.DateOnly).Nullable(),
 	)
 
 	date, err := time.Parse(time.DateOnly, "2020-12-31")
@@ -698,12 +765,12 @@ func TestParseTimeInLocation(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustParseTimeInLocation(time.DateOnly, time.UTC),
-		schema["Nullable"].Nullable().MustParseTimeInLocation(time.DateOnly, time.UTC),
-		schema["NullableNull"].Nullable().MustParseTimeInLocation(time.DateOnly, time.UTC),
-		schema["Value"].MustParseTimeInLocation(time.DateOnly, time.UTC),
-		schema["ValueNullable"].MustParseTimeInLocation(time.DateOnly, time.UTC).Nullable(),
-		schema["ValueNullableNull"].MustParseTimeInLocation(time.DateOnly, time.UTC).Nullable(),
+		schema.MustParseTimeInLocation("Direct", time.DateOnly, time.UTC),
+		schema.MustParseTimeInLocation("Nullable", time.DateOnly, time.UTC).Nullable(),
+		schema.MustParseTimeInLocation("NullableNull", time.DateOnly, time.UTC).Nullable(),
+		schema.MustParseTimeInLocation("Value", time.DateOnly, time.UTC),
+		schema.MustParseTimeInLocation("ValueNullable", time.DateOnly, time.UTC).Nullable(),
+		schema.MustParseTimeInLocation("ValueNullableNull", time.DateOnly, time.UTC).Nullable(),
 	)
 
 	date, err := time.ParseInLocation(time.DateOnly, "2020-12-31", time.UTC)
@@ -753,27 +820,27 @@ func TestStringEnum(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustStringEnum(
+		schema.MustStringEnum("Direct",
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
-		schema["Nullable"].Nullable().MustStringEnum(
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema["NullableNull"].Nullable().MustStringEnum(
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema["Value"].MustStringEnum(
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema["ValueNullable"].MustStringEnum(
+		schema.MustStringEnum("Nullable",
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		).Nullable(),
-		schema["ValueNullableNull"].MustStringEnum(
+		schema.MustStringEnum("NullableNull",
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		).Nullable(),
+		schema.MustStringEnum("Value",
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema.MustStringEnum("ValueNullable",
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		).Nullable(),
+		schema.MustStringEnum("ValueNullableNull",
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		).Nullable(),
@@ -821,27 +888,27 @@ func TestIntEnum(t *testing.T) {
 	schema := structscan.New[T]()
 
 	mapper := structscan.Map(
-		schema["Direct"].MustIntEnum(
+		schema.MustIntEnum("Direct",
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		),
-		schema["Nullable"].Nullable().MustIntEnum(
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema["NullableNull"].Nullable().MustIntEnum(
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema["Value"].MustIntEnum(
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema["ValueNullable"].MustIntEnum(
+		schema.MustIntEnum("Nullable",
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		).Nullable(),
-		schema["ValueNullableNull"].MustIntEnum(
+		schema.MustIntEnum("NullableNull",
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		).Nullable(),
+		schema.MustIntEnum("Value",
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		),
+		schema.MustIntEnum("ValueNullable",
+			structscan.Enum{String: "Inactive", Int: 0},
+			structscan.Enum{String: "Active", Int: 1},
+		).Nullable(),
+		schema.MustIntEnum("ValueNullableNull",
 			structscan.Enum{String: "Inactive", Int: 0},
 			structscan.Enum{String: "Active", Int: 1},
 		).Nullable(),
@@ -878,7 +945,7 @@ func TestUnmarshalJSON(t *testing.T) {
 	schema := structscan.New[map[string]any]()
 
 	mapper := structscan.Map(
-		schema[""].UnmarshalJSON(),
+		schema.MustUnmarshalJSON(""),
 	)
 
 	expect := map[string]any{
@@ -907,7 +974,7 @@ func TestUnmarshalBinary(t *testing.T) {
 	schema := structscan.New[*url.URL]()
 
 	mapper := structscan.Map(
-		schema[""].MustUnmarshalBinary(),
+		schema.MustUnmarshalBinary(""),
 	)
 
 	expect, err := url.Parse("https://localhost:1234/path?query=true")
@@ -940,12 +1007,124 @@ func TestUnmarshalText(t *testing.T) {
 	schema := structscan.New[*big.Int]()
 
 	mapper := structscan.Map(
-		schema[""].MustUnmarshalText(),
+		schema.MustUnmarshalText(""),
 	)
 
 	expect := big.NewInt(10)
 
 	rows, err := db.Query(`SELECT '10'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestSingleInt(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	schema := structscan.New[int64]()
+
+	mapper := structscan.Map(
+		schema.MustNullable(""),
+	)
+
+	expect := int64(10)
+
+	rows, err := db.Query(`SELECT 10`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestSingleString(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mapper := structscan.Map(
+		structscan.New[string](),
+	)
+
+	expect := "10"
+
+	rows, err := db.Query(`SELECT '10'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestSingleFloat(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mapper := structscan.Map[float64]()
+
+	expect := 1.23
+
+	rows, err := db.Query(`SELECT 1.23`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := mapper.One(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(result, expect) {
+		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+	}
+}
+
+func TestSingleFloatDefault(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	mapper := structscan.Map(
+		structscan.New[float64]().MustDefaultFloat("", 1.23),
+	)
+
+	expect := 1.23
+
+	rows, err := db.Query(`SELECT NULL`)
 	if err != nil {
 		t.Fatal(err)
 	}

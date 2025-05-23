@@ -40,24 +40,24 @@ type Data struct {
 var (
 	schema = structscan.New[Data]()
 	mapper = structscan.Map(
-		schema["Int"].MustIntEnum(
+		schema.MustIntEnum("Int",
 			structscan.Enum{String: "one", Int: 1},
 			structscan.Enum{String: "two", Int: 2},
 			structscan.Enum{String: "three", Int: 3},
 			structscan.Enum{String: "hundred", Int: 100},
 		),
-		schema["String"].MustStringEnum(
+		schema.MustStringEnum("String",
 			structscan.Enum{String: "one", Int: 1},
 			structscan.Enum{String: "two", Int: 2},
 			structscan.Enum{String: "three", Int: 3},
 			structscan.Enum{String: "hundred", Int: 100},
 		),
-		schema["Bool"].MustBool(),
-		schema["Time"].MustParseTime(time.DateOnly).Default("2001-02-03"),
-		schema["Big"].MustUnmarshalText(),
-		schema["URL"].MustUnmarshalBinary(),
-		schema["JSON"].UnmarshalJSON().Default([]byte(`{"hello":"world"}`)),
-		schema["Slice"].MustSplit(","),
+		schema.MustBool("Bool"),
+		schema.MustParseTime("Time", time.DateOnly).Default("2001-02-03"),
+		schema.MustUnmarshalText("Big"),
+		schema.MustUnmarshalBinary("URL"),
+		schema.MustUnmarshalJSON("JSON").Default([]byte(`{"hello":"world"}`)),
+		schema.MustSplit("Slice", ","),
 	)
 )
 

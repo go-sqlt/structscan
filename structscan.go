@@ -30,24 +30,24 @@ type Data struct {
 var (
 	schema = structscan.New[Data]()
 	mapper = structscan.Map(
-		schema["Int"].MustIntEnum(
+		schema.MustIntEnum("Int",
 			structscan.Enum{String: "one", Int: 1},
 			structscan.Enum{String: "two", Int: 2},
 			structscan.Enum{String: "three", Int: 3},
 			structscan.Enum{String: "hundred", Int: 100},
 		),
-		schema["String"].MustStringEnum(
+		schema.MustStringEnum("String",
 			structscan.Enum{String: "one", Int: 1},
 			structscan.Enum{String: "two", Int: 2},
 			structscan.Enum{String: "three", Int: 3},
 			structscan.Enum{String: "hundred", Int: 100},
 		),
-		schema["Bool"].MustBool(),
-		schema["Time"].MustParseTime(time.DateOnly).Default("2001-02-03"),
-		schema["Big"].MustUnmarshalText(),
-		schema["URL"].MustUnmarshalBinary(),
-		schema["JSON"].UnmarshalJSON().Default([]byte(`{"hello":"world"}`)),
-		schema["Slice"].MustSplit(","),
+		schema.MustBool("Bool"),
+		schema.MustParseTime("Time", time.DateOnly).Default("2001-02-03"),
+		schema.MustUnmarshalText("Big"),
+		schema.MustUnmarshalBinary("URL"),
+		schema.MustUnmarshalJSON("JSON").Default([]byte(`{"hello":"world"}`)),
+		schema.MustSplit("Slice", ","),
 	)
 )
 
@@ -80,7 +80,6 @@ func main() {
 	fmt.Println(data)
 	// {1 two true 2001-02-03 00:00:00 +0000 UTC {false [300]} https://example.com/path?query=yes map[hello:world] [hello world]}
 }
-
 
 */
 package structscan
@@ -218,7 +217,9 @@ func (m Mapper[T]) Row(row *sql.Row) (T, error) {
 // New returns a Struct schema that maps all accessible (exported) fields of T,
 // including nested ones, using dot notation (e.g., "Nested.Field").
 func New[T any]() Struct[T] {
-	s := Struct[T]{}
+	s := Struct[T]{
+		fields: map[string]Field[T]{},
+	}
 
 	s.fillSchema(nil, "", reflect.TypeFor[T]())
 
@@ -226,8 +227,10 @@ func New[T any]() Struct[T] {
 }
 
 // Struct is a schema mapping from field paths to Field definitions for struct type T.
-// Nested fields are addressed using dot notation (e.g., "Parent.Child").
-type Struct[T any] map[string]Field[T]
+// Nested field path are addressed using dot notation (e.g., "Parent.Child").
+type Struct[T any] struct {
+	fields map[string]Field[T]
+}
 
 // fillSchema recursively registers all exported fields of a struct, including pointers and nested structs.
 func (s Struct[T]) fillSchema(indices []int, path string, t reflect.Type) {
@@ -237,7 +240,7 @@ func (s Struct[T]) fillSchema(indices []int, path string, t reflect.Type) {
 		indices = append(indices, -1)
 	}
 
-	s[path] = Field[T]{
+	s.fields[path] = Field[T]{
 		dstType:  t,
 		indices:  indices,
 		nullable: false,
@@ -285,54 +288,164 @@ func access[T any](t *T, indices []int) reflect.Value {
 	return dst
 }
 
-// Field is a Scanner that uses the underlying field's type to scan values into T.
-type Field[T any] struct {
-	dstType  reflect.Type
-	nullable bool
-	indices  []int
+// MustField is like Field but panics if an error occurs.
+func (s Struct[T]) MustField(path string) Field[T] {
+	return must(s.Field(path))
+}
+
+// Fields returns a field corresponding to a struct field.
+func (s Struct[T]) Field(path string) (Field[T], error) {
+	f, ok := s.fields[path]
+	if !ok {
+		return Field[T]{}, fmt.Errorf("field not found: %s", path)
+	}
+
+	return f, nil
 }
 
 // Scan returns a destination and a function to assign the scanned value to a struct field.
-func (f Field[T]) Scan() (any, func(*T) error) {
-	if f.nullable {
-		src := reflect.New(reflect.PointerTo(f.dstType))
+func (s Struct[T]) Scan() (any, func(*T) error) {
+	var src T
 
-		return src.Interface(), func(t *T) error {
-			elem := src.Elem()
-
-			if !elem.IsValid() || elem.IsNil() {
-				return nil
-			}
-
-			access(t, f.indices).Set(elem.Elem())
-
-			return nil
-		}
-	}
-
-	src := reflect.New(f.dstType)
-
-	return src.Interface(), func(t *T) error {
-		access(t, f.indices).Set(src.Elem())
+	return &src, func(t *T) error {
+		*t = src
 
 		return nil
 	}
 }
 
-// Nullable marks the field as nullable, allowing it to accept NULL values.
-func (f Field[T]) Nullable() Field[T] {
-	f.nullable = true
+// MustNullable is like Nullable but panics if an error occurs.
+func (s Struct[T]) MustNullable(path string) Field[T] {
+	return must(s.Nullable(path))
+}
 
-	return f
+// Nullable marks the field as nullable, allowing it to accept NULL values.
+func (s Struct[T]) Nullable(path string) (Field[T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return Field[T]{}, fmt.Errorf("nullable: %w", err)
+	}
+
+	return f.Nullable(), nil
+}
+
+// MustDefaultString is like DefaultString but panics if an error occurs.
+func (s Struct[T]) MustDefaultString(path string, value string) ValueField[string, T] {
+	return must(s.DefaultString(path, value))
+}
+
+// DefaultString sets a fallback value that is used if the scanned value is NULL.
+func (s Struct[T]) DefaultString(path string, value string) (ValueField[string, T], error) {
+	f, err := s.String(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("default string: %w", err)
+	}
+
+	return f.Default(value), nil
+}
+
+// MustDefaultInt is like DefaultInt but panics if an error occurs.
+func (s Struct[T]) MustDefaultInt(path string, value int64) ValueField[int64, T] {
+	return must(s.DefaultInt(path, value))
+}
+
+// DefaultInt sets a fallback value that is used if the scanned value is NULL.
+func (s Struct[T]) DefaultInt(path string, value int64) (ValueField[int64, T], error) {
+	f, err := s.Int(path)
+	if err != nil {
+		return ValueField[int64, T]{}, fmt.Errorf("default int: %w", err)
+	}
+
+	return f.Default(value), nil
+}
+
+// MustDefaultUint is like DefaultUint but panics if an error occurs.
+func (s Struct[T]) MustDefaultUint(path string, value uint64) ValueField[uint64, T] {
+	return must(s.DefaultUint(path, value))
+}
+
+// DefaultUint sets a fallback value that is used if the scanned value is NULL.
+func (s Struct[T]) DefaultUint(path string, value uint64) (ValueField[uint64, T], error) {
+	f, err := s.Uint(path)
+	if err != nil {
+		return ValueField[uint64, T]{}, fmt.Errorf("default int: %w", err)
+	}
+
+	return f.Default(value), nil
+}
+
+// MustDefaultFloat is like DefaultFloat but panics if an error occurs.
+func (s Struct[T]) MustDefaultFloat(path string, value float64) ValueField[float64, T] {
+	return must(s.DefaultFloat(path, value))
+}
+
+// DefaultFloat sets a fallback value that is used if the scanned value is NULL.
+func (s Struct[T]) DefaultFloat(path string, value float64) (ValueField[float64, T], error) {
+	f, err := s.Float(path)
+	if err != nil {
+		return ValueField[float64, T]{}, fmt.Errorf("default float64: %w", err)
+	}
+
+	return f.Default(value), nil
+}
+
+// MustDefaultBool is like DefaultBool but panics if an error occurs.
+func (s Struct[T]) MustDefaultBool(path string, value bool) ValueField[bool, T] {
+	return must(s.DefaultBool(path, value))
+}
+
+// DefaultBool sets a fallback value that is used if the scanned value is NULL.
+func (s Struct[T]) DefaultBool(path string, value bool) (ValueField[bool, T], error) {
+	f, err := s.Bool(path)
+	if err != nil {
+		return ValueField[bool, T]{}, fmt.Errorf("default bool: %w", err)
+	}
+
+	return f.Default(value), nil
+}
+
+// MustDefaultTime is like DefaultTime but panics if an error occurs.
+func (s Struct[T]) MustDefaultTime(path string, value time.Time) ValueField[time.Time, T] {
+	return must(s.DefaultTime(path, value))
+}
+
+// DefaultTime sets a fallback value that is used if the scanned value is NULL.
+func (s Struct[T]) DefaultTime(path string, value time.Time) (ValueField[time.Time, T], error) {
+	f, err := s.Time(path)
+	if err != nil {
+		return ValueField[time.Time, T]{}, fmt.Errorf("default time: %w", err)
+	}
+
+	return f.Default(value), nil
+}
+
+// MustDefaultBytes is like DefaultBytes but panics if an error occurs.
+func (s Struct[T]) MustDefaultBytes(path string, value []byte) ValueField[[]byte, T] {
+	return must(s.DefaultBytes(path, value))
+}
+
+// DefaultBytes sets a fallback value that is used if the scanned value is NULL.
+func (s Struct[T]) DefaultBytes(path string, value []byte) (ValueField[[]byte, T], error) {
+	f, err := s.Bytes(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, fmt.Errorf("default bytes: %w", err)
+	}
+
+	return f.Default(value), nil
 }
 
 // MustString is like String but panics if an error occurs.
-func (f Field[T]) MustString() ValueField[string, T] {
-	return must(f.String())
+func (s Struct[T]) MustString(path string) ValueField[string, T] {
+	return must(s.String(path))
 }
 
 // String scans into a string value and sets its value into the fields destination.
-func (f Field[T]) String() (ValueField[string, T], error) {
+func (s Struct[T]) String(path string) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("string: %w", err)
+	}
+
 	if f.dstType.Kind() != reflect.String {
 		return ValueField[string, T]{}, fmt.Errorf("string: invalid type: %s", f.dstType)
 	}
@@ -350,19 +463,24 @@ func (f Field[T]) String() (ValueField[string, T], error) {
 }
 
 // MustInt is like Int but panics if an error occurs.
-func (f Field[T]) MustInt() ValueField[int64, T] {
-	return must(f.Int())
+func (s Struct[T]) MustInt(path string) ValueField[int64, T] {
+	return must(s.Int(path))
 }
 
 // Int scans into an int64 and sets the value into the field's destination.
-func (f Field[T]) Int() (ValueField[int64, T], error) {
+func (s Struct[T]) Int(path string) (ValueField[int64, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[int64, T]{}, fmt.Errorf("int64: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[int64, T]{}, fmt.Errorf("int: invalid type: %s", f.dstType)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return ValueField[int64, T]{
 			nullable:     f.nullable,
-			indices:      f.indices, // MustString is like String but panics if an error occurs.
+			indices:      f.indices,
 			defaultValue: nil,
 			set: func(dst reflect.Value, src int64) error {
 				dst.SetInt(src)
@@ -373,13 +491,47 @@ func (f Field[T]) Int() (ValueField[int64, T], error) {
 	}
 }
 
+// MustUint is like Uint but panics if an error occurs.
+func (s Struct[T]) MustUint(path string) ValueField[uint64, T] {
+	return must(s.Uint(path))
+}
+
+// Uint scans into an uint64 and sets the value into the field's destination.
+func (s Struct[T]) Uint(path string) (ValueField[uint64, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[uint64, T]{}, fmt.Errorf("uint64: %w", err)
+	}
+
+	switch f.dstType.Kind() {
+	default:
+		return ValueField[uint64, T]{}, fmt.Errorf("uint64: invalid type: %s", f.dstType)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return ValueField[uint64, T]{
+			nullable:     f.nullable,
+			indices:      f.indices,
+			defaultValue: nil,
+			set: func(dst reflect.Value, src uint64) error {
+				dst.SetUint(src)
+
+				return nil
+			},
+		}, nil
+	}
+}
+
 // MustFloat is like Float but panics if an error occurs.
-func (f Field[T]) MustFloat() ValueField[float64, T] {
-	return must(f.Float())
+func (s Struct[T]) MustFloat(path string) ValueField[float64, T] {
+	return must(s.Float(path))
 }
 
 // Float scans into a float value and sets its value into the fields destination.
-func (f Field[T]) Float() (ValueField[float64, T], error) {
+func (s Struct[T]) Float(path string) (ValueField[float64, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[float64, T]{}, fmt.Errorf("float: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[float64, T]{}, fmt.Errorf("float: invalid type: %s", f.dstType)
@@ -398,12 +550,17 @@ func (f Field[T]) Float() (ValueField[float64, T], error) {
 }
 
 // MustBool is like Bool but panics if an error occurs.
-func (f Field[T]) MustBool() ValueField[bool, T] {
-	return must(f.Bool())
+func (s Struct[T]) MustBool(path string) ValueField[bool, T] {
+	return must(s.Bool(path))
 }
 
 // Bool scans into a bool value and sets its value into the fields destination.
-func (f Field[T]) Bool() (ValueField[bool, T], error) {
+func (s Struct[T]) Bool(path string) (ValueField[bool, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[bool, T]{}, fmt.Errorf("bool: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[bool, T]{}, fmt.Errorf("bool: invalid type: %s", f.dstType)
@@ -422,12 +579,17 @@ func (f Field[T]) Bool() (ValueField[bool, T], error) {
 }
 
 // MustBytes is like Bytes but panics if an error occurs.
-func (f Field[T]) MustBytes() ValueField[[]byte, T] {
-	return must(f.Bytes())
+func (s Struct[T]) MustBytes(path string) ValueField[[]byte, T] {
+	return must(s.Bytes(path))
 }
 
 // Bytes scans into a []byte value and sets its value into the fields destination.
-func (f Field[T]) Bytes() (ValueField[[]byte, T], error) {
+func (s Struct[T]) Bytes(path string) (ValueField[[]byte, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, fmt.Errorf("bytes: %w", err)
+	}
+
 	if f.dstType == byteSliceType {
 		return ValueField[[]byte, T]{
 			nullable:     f.nullable,
@@ -458,12 +620,17 @@ func (f Field[T]) Bytes() (ValueField[[]byte, T], error) {
 }
 
 // MustTime is like Time but panics if an error occurs.
-func (f Field[T]) MustTime() ValueField[time.Time, T] {
-	return must(f.Time())
+func (s Struct[T]) MustTime(path string) ValueField[time.Time, T] {
+	return must(s.Time(path))
 }
 
 // Time scans into a time.Time value and sets its value into the fields destination.
-func (f Field[T]) Time() (ValueField[time.Time, T], error) {
+func (s Struct[T]) Time(path string) (ValueField[time.Time, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[time.Time, T]{}, fmt.Errorf("time: %w", err)
+	}
+
 	if f.dstType == timeType {
 		return ValueField[time.Time, T]{
 			nullable:     f.nullable,
@@ -495,13 +662,18 @@ func (f Field[T]) Time() (ValueField[time.Time, T], error) {
 }
 
 // MustSplit is like Split but panics if an error occurs.
-func (f Field[T]) MustSplit(sep string) ValueField[string, T] {
-	return must(f.Split(sep))
+func (s Struct[T]) MustSplit(path string, sep string) ValueField[string, T] {
+	return must(s.Split(path, sep))
 }
 
 // Split parses a delimited string and assigns the parts to a slice or array field.
 // Supports slices and fixed-length arrays of strings.
-func (f Field[T]) Split(sep string) (ValueField[string, T], error) {
+func (s Struct[T]) Split(path string, sep string) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("split: %w", err)
+	}
+
 	if f.dstType == stringSliceType {
 		return ValueField[string, T]{
 			nullable:     f.nullable,
@@ -578,12 +750,17 @@ func (f Field[T]) Split(sep string) (ValueField[string, T], error) {
 }
 
 // MustParseInt is like ParseInt but panics if an error occurs.
-func (f Field[T]) MustParseInt(base int, bitSize int) ValueField[string, T] {
-	return must(f.ParseInt(base, bitSize))
+func (s Struct[T]) MustParseInt(path string, base int, bitSize int) ValueField[string, T] {
+	return must(s.ParseInt(path, base, bitSize))
 }
 
 // ParseInt scans into a string value, parses its value and sets the result into the fields destination.
-func (f Field[T]) ParseInt(base int, bitSize int) (ValueField[string, T], error) {
+func (s Struct[T]) ParseInt(path string, base int, bitSize int) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("parse int: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[string, T]{}, fmt.Errorf("parse int: invalid type: %s", f.dstType)
@@ -607,12 +784,17 @@ func (f Field[T]) ParseInt(base int, bitSize int) (ValueField[string, T], error)
 }
 
 // MustParseUint is like ParseUint but panics if an error occurs.
-func (f Field[T]) MustParseUint(base int, bitSize int) ValueField[string, T] {
-	return must(f.ParseUint(base, bitSize))
+func (s Struct[T]) MustParseUint(path string, base int, bitSize int) ValueField[string, T] {
+	return must(s.ParseUint(path, base, bitSize))
 }
 
 // ParseUint scans into a string value, parses its value and sets the result into the fields destination.
-func (f Field[T]) ParseUint(base int, bitSize int) (ValueField[string, T], error) {
+func (s Struct[T]) ParseUint(path string, base int, bitSize int) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("parse uint: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[string, T]{}, fmt.Errorf("parse uint: invalid type: %s", f.dstType)
@@ -636,12 +818,17 @@ func (f Field[T]) ParseUint(base int, bitSize int) (ValueField[string, T], error
 }
 
 // MustParseFloat is like ParseFloat but panics if an error occurs.
-func (f Field[T]) MustParseFloat(bitSize int) ValueField[string, T] {
-	return must(f.ParseFloat(bitSize))
+func (s Struct[T]) MustParseFloat(path string, bitSize int) ValueField[string, T] {
+	return must(s.ParseFloat(path, bitSize))
 }
 
 // ParseFloat scans into a string value, parses its value and sets the result into the fields destination.
-func (f Field[T]) ParseFloat(bitSize int) (ValueField[string, T], error) {
+func (s Struct[T]) ParseFloat(path string, bitSize int) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("parse float: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[string, T]{}, fmt.Errorf("parse float: invalid type: %s", f.dstType)
@@ -665,12 +852,17 @@ func (f Field[T]) ParseFloat(bitSize int) (ValueField[string, T], error) {
 }
 
 // MustParseComplex is like ParseComplex but panics if an error occurs.
-func (f Field[T]) MustParseComplex(bitSize int) ValueField[string, T] {
-	return must(f.ParseComplex(bitSize))
+func (s Struct[T]) MustParseComplex(path string, bitSize int) ValueField[string, T] {
+	return must(s.ParseComplex(path, bitSize))
 }
 
 // ParseComplex scans into a string value, parses its value and sets the result into the fields destination.
-func (f Field[T]) ParseComplex(bitSize int) (ValueField[string, T], error) {
+func (s Struct[T]) ParseComplex(path string, bitSize int) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("parse complex: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[string, T]{}, fmt.Errorf("parse complex: invalid type: %s", f.dstType)
@@ -694,12 +886,17 @@ func (f Field[T]) ParseComplex(bitSize int) (ValueField[string, T], error) {
 }
 
 // MustParseBool is like ParseBool but panics if an error occurs.
-func (f Field[T]) MustParseBool() ValueField[string, T] {
-	return must(f.ParseBool())
+func (s Struct[T]) MustParseBool(path string) ValueField[string, T] {
+	return must(s.ParseBool(path))
 }
 
 // ParseBool scans into a string value, parses its value and sets the result into the fields destination.
-func (f Field[T]) ParseBool() (ValueField[string, T], error) {
+func (s Struct[T]) ParseBool(path string) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("parse bool: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[string, T]{}, fmt.Errorf("parse bool: invalid type: %s", f.dstType)
@@ -723,12 +920,17 @@ func (f Field[T]) ParseBool() (ValueField[string, T], error) {
 }
 
 // MustParseTime is like ParseTime but panics if an error occurs.
-func (f Field[T]) MustParseTime(layout string) ValueField[string, T] {
-	return must(f.ParseTime(layout))
+func (s Struct[T]) MustParseTime(path string, layout string) ValueField[string, T] {
+	return must(s.ParseTime(path, layout))
 }
 
 // ParseTime scans into a string value, parses its value and sets the result into the fields destination.
-func (f Field[T]) ParseTime(layout string) (ValueField[string, T], error) {
+func (s Struct[T]) ParseTime(path string, layout string) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("parse time: %w", err)
+	}
+
 	if f.dstType == timeType {
 		return ValueField[string, T]{
 			nullable:     f.nullable,
@@ -769,12 +971,17 @@ func (f Field[T]) ParseTime(layout string) (ValueField[string, T], error) {
 }
 
 // MustParseTimeInLocation is like ParseTimeInLocation but panics if an error occurs.
-func (f Field[T]) MustParseTimeInLocation(layout string, loc *time.Location) ValueField[string, T] {
-	return must(f.ParseTimeInLocation(layout, loc))
+func (s Struct[T]) MustParseTimeInLocation(path string, layout string, loc *time.Location) ValueField[string, T] {
+	return must(s.ParseTimeInLocation(path, layout, loc))
 }
 
 // ParseTimeInLocation scans into a string value, parses its value and sets the result into the fields destination.
-func (f Field[T]) ParseTimeInLocation(layout string, loc *time.Location) (ValueField[string, T], error) {
+func (s Struct[T]) ParseTimeInLocation(path string, layout string, loc *time.Location) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("parse time in location: %w", err)
+	}
+
 	if f.dstType == timeType {
 		return ValueField[string, T]{
 			nullable:     f.nullable,
@@ -814,10 +1021,20 @@ func (f Field[T]) ParseTimeInLocation(layout string, loc *time.Location) (ValueF
 	return ValueField[string, T]{}, fmt.Errorf("parse time in location: invalid type: %s", f.dstType)
 }
 
+// MustUnmarshalJSON is like UnmarshalJSON but panics if an error occurs.
+func (s Struct[T]) MustUnmarshalJSON(path string) ValueField[[]byte, T] {
+	return must(s.UnmarshalJSON(path))
+}
+
 // UnmarshalJSON scans into a []byte value, unmarshals its value into the fields destination.
 //
 //nolint:govet
-func (f Field[T]) UnmarshalJSON() ValueField[[]byte, T] {
+func (s Struct[T]) UnmarshalJSON(path string) (ValueField[[]byte, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, fmt.Errorf("unmarshal json: %w", err)
+	}
+
 	return ValueField[[]byte, T]{
 		nullable:     f.nullable,
 		indices:      f.indices,
@@ -825,16 +1042,21 @@ func (f Field[T]) UnmarshalJSON() ValueField[[]byte, T] {
 		set: func(dst reflect.Value, src []byte) error {
 			return json.Unmarshal(src, dst.Addr().Interface())
 		},
-	}
+	}, nil
 }
 
 // MustUnmarshalText is like UnmarshalText but panics if an error occurs.
-func (f Field[T]) MustUnmarshalText() ValueField[[]byte, T] {
-	return must(f.UnmarshalText())
+func (s Struct[T]) MustUnmarshalText(path string) ValueField[[]byte, T] {
+	return must(s.UnmarshalText(path))
 }
 
 // UnmarshalText scans into a []byte value, unmarshals its value into the fields destination.
-func (f Field[T]) UnmarshalText() (ValueField[[]byte, T], error) {
+func (s Struct[T]) UnmarshalText(path string) (ValueField[[]byte, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, fmt.Errorf("unmarshal text: %w", err)
+	}
+
 	if !reflect.PointerTo(f.dstType).Implements(textUnmarshalerType) {
 		return ValueField[[]byte, T]{}, fmt.Errorf("unmarshal text: invalid type: %s", f.dstType)
 	}
@@ -851,12 +1073,17 @@ func (f Field[T]) UnmarshalText() (ValueField[[]byte, T], error) {
 }
 
 // MustUnmarshalBinary is like UnmarshalBinary but panics if an error occurs.
-func (f Field[T]) MustUnmarshalBinary() ValueField[[]byte, T] {
-	return must(f.UnmarshalBinary())
+func (s Struct[T]) MustUnmarshalBinary(path string) ValueField[[]byte, T] {
+	return must(s.UnmarshalBinary(path))
 }
 
 // UnmarshalBinary scans into a []byte value, unmarshals its value into the fields destination.
-func (f Field[T]) UnmarshalBinary() (ValueField[[]byte, T], error) {
+func (s Struct[T]) UnmarshalBinary(path string) (ValueField[[]byte, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[[]byte, T]{}, fmt.Errorf("unmarshal binary: %w", err)
+	}
+
 	if !reflect.PointerTo(f.dstType).Implements(binaryUnmarshalerType) {
 		return ValueField[[]byte, T]{}, fmt.Errorf("unmarshal binary: invalid type: %s", f.dstType)
 	}
@@ -879,12 +1106,17 @@ type Enum struct {
 }
 
 // MustIntEnum is like IntEnum but panics if an error occurs.
-func (f Field[T]) MustIntEnum(enums ...Enum) ValueField[string, T] {
-	return must(f.IntEnum(enums...))
+func (s Struct[T]) MustIntEnum(path string, enums ...Enum) ValueField[string, T] {
+	return must(s.IntEnum(path, enums...))
 }
 
 // IntEnum scans into a string value and sets the corresponding int value to the fields destination.
-func (f Field[T]) IntEnum(enums ...Enum) (ValueField[string, T], error) {
+func (s Struct[T]) IntEnum(path string, enums ...Enum) (ValueField[string, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[string, T]{}, fmt.Errorf("int enum: %w", err)
+	}
+
 	switch f.dstType.Kind() {
 	default:
 		return ValueField[string, T]{}, fmt.Errorf("int enum: invalid type: %s", f.dstType)
@@ -915,12 +1147,17 @@ func (f Field[T]) IntEnum(enums ...Enum) (ValueField[string, T], error) {
 }
 
 // MustStringEnum is like StringEnum but panics if an error occurs.
-func (f Field[T]) MustStringEnum(enums ...Enum) ValueField[int64, T] {
-	return must(f.StringEnum(enums...))
+func (s Struct[T]) MustStringEnum(path string, enums ...Enum) ValueField[int64, T] {
+	return must(s.StringEnum(path, enums...))
 }
 
 // StringEnum scans into a int value and sets the corresponding string value to the fields destination.
-func (f Field[T]) StringEnum(enums ...Enum) (ValueField[int64, T], error) {
+func (s Struct[T]) StringEnum(path string, enums ...Enum) (ValueField[int64, T], error) {
+	f, err := s.Field(path)
+	if err != nil {
+		return ValueField[int64, T]{}, fmt.Errorf("string enum: %w", err)
+	}
+
 	if f.dstType.Kind() != reflect.String {
 		return ValueField[int64, T]{}, fmt.Errorf("string enum: invalid type: %s", f.dstType)
 	}
@@ -946,6 +1183,47 @@ func (f Field[T]) StringEnum(enums ...Enum) (ValueField[int64, T], error) {
 			return nil
 		},
 	}, nil
+}
+
+// Field is a Scanner that uses the underlying field's type to scan values into T.
+type Field[T any] struct {
+	dstType  reflect.Type
+	nullable bool
+	indices  []int
+}
+
+// Scan returns a destination and a function to assign the scanned value to a struct field.
+func (f Field[T]) Scan() (any, func(*T) error) {
+	if f.nullable {
+		src := reflect.New(reflect.PointerTo(f.dstType))
+
+		return src.Interface(), func(t *T) error {
+			elem := src.Elem()
+
+			if !elem.IsValid() || elem.IsNil() {
+				return nil
+			}
+
+			access(t, f.indices).Set(elem.Elem())
+
+			return nil
+		}
+	}
+
+	src := reflect.New(f.dstType)
+
+	return src.Interface(), func(t *T) error {
+		access(t, f.indices).Set(src.Elem())
+
+		return nil
+	}
+}
+
+// Nullable marks the field as nullable, allowing it to accept NULL values.
+func (f Field[T]) Nullable() Field[T] {
+	f.nullable = true
+
+	return f
 }
 
 // ValueField implements the Scanner interface.
