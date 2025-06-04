@@ -13,1128 +13,857 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func ptr[T any](v T) *T {
-	return &v
+type MyString string
+
+type MyInt64 int64
+
+type MyFloat64 float64
+
+type MyBool bool
+
+type Data struct {
+	Time                 time.Time
+	Nested               *Data
+	NullStringPointer    *sql.Null[string]
+	Int32Pointer         *int32
+	StringPointerPointer **string
+	StringPointer        *string
+	AnyMap               map[string]any
+	BigIntPointer        *big.Int
+	URLPointer           *url.URL
+	TimePointer          *time.Time
+	URL                  url.URL
+	Array                [2]string
+	String               string
+	MyString             MyString
+	BigInt               big.Int
+	NullString           sql.Null[string]
+	Strings              []string
+	RawJSON              json.RawMessage
+	StringPointers       []*string
+	Bytes                []byte
+	Complex64            complex64
+	Float64              float64
+	Uint64               uint64
+	MyInt64              MyInt64
+	Int16                int16
+	Bool                 bool
+	Duration             time.Duration
 }
 
-func TestString(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            string
-		Nullable          *string
-		NullableNull      string
-		Value             *string
-		ValueNullable     string
-		ValueNullableNull *string
-		Default           string
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustField("Direct"),
-		schema.MustNullable("Nullable"),
-		schema.MustNullable("NullableNull"),
-		schema.MustString("Value"),
-		schema.MustString("ValueNullable").Nullable(),
-		schema.MustString("ValueNullableNull").Nullable(),
-		schema.MustDefaultString("Default", "default"),
-	)
-
-	expect := T{
-		Direct:            "hello",
-		Nullable:          ptr("hello"),
-		NullableNull:      "",
-		Value:             ptr("hello"),
-		ValueNullable:     "hello",
-		ValueNullableNull: nil,
-		Default:           "default",
-	}
-
-	rows, err := db.Query("SELECT 'hello', 'hello', NULL, 'hello', 'hello', NULL, NULL")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestInt(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            int64
-		Nullable          *int32
-		NullableNull      int16
-		Value             *int8
-		ValueNullable     int
-		ValueNullableNull *int64
-		Default           int64
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustField("Direct"),
-		schema.MustNullable("Nullable"),
-		schema.MustNullable("NullableNull"),
-		schema.MustInt("Value"),
-		schema.MustInt("ValueNullable").Nullable(),
-		schema.MustInt("ValueNullableNull").Nullable(),
-		schema.MustDefaultInt("Default", 10),
-	)
-
-	expect := T{
-		Direct:            1,
-		Nullable:          ptr[int32](2),
-		NullableNull:      0,
-		Value:             ptr[int8](3),
-		ValueNullable:     4,
-		ValueNullableNull: nil,
-		Default:           10,
-	}
-
-	rows, err := db.Query("SELECT 1, 2, NULL, 3, 4, NULL, NULL")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestUint(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            uint64
-		Nullable          *uint32
-		NullableNull      uint16
-		Value             *uint8
-		ValueNullable     uint
-		ValueNullableNull *uint64
-		Default           uint64
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustField("Direct"),
-		schema.MustNullable("Nullable"),
-		schema.MustNullable("NullableNull"),
-		schema.MustUint("Value"),
-		schema.MustUint("ValueNullable").Nullable(),
-		schema.MustUint("ValueNullableNull").Nullable(),
-		schema.MustDefaultUint("Default", 10),
-	)
-
-	expect := T{
-		Direct:            uint64(1),
-		Nullable:          ptr[uint32](2),
-		NullableNull:      0,
-		Value:             ptr[uint8](3),
-		ValueNullable:     uint(4),
-		ValueNullableNull: nil,
-		Default:           10,
-	}
-
-	rows, err := db.Query("SELECT 1, 2, NULL, 3, 4, NULL, NULL")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestFloat(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            float64
-		Nullable          *float64
-		NullableNull      float32
-		Value             *float32
-		ValueNullable     float64
-		ValueNullableNull *float64
-		Default           float64
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustField("Direct"),
-		schema.MustNullable("Nullable"),
-		schema.MustNullable("NullableNull"),
-		schema.MustFloat("Value"),
-		schema.MustFloat("ValueNullable").Nullable(),
-		schema.MustFloat("ValueNullableNull").Nullable(),
-		schema.MustDefaultFloat("Default", 1.23),
-	)
-
-	expect := T{
-		Direct:            1.23,
-		Nullable:          ptr(2.34),
-		NullableNull:      0,
-		Value:             ptr[float32](3.45),
-		ValueNullable:     4.56,
-		ValueNullableNull: nil,
-		Default:           1.23,
-	}
-
-	row := db.QueryRow("SELECT 1.23, 2.34, NULL, 3.45, 4.56, NULL, NULL")
-
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestBool(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            bool
-		Nullable          *bool
-		NullableNull      bool
-		Value             *bool
-		ValueNullable     bool
-		ValueNullableNull *bool
-		Default           bool
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustField("Direct"),
-		schema.MustNullable("Nullable"),
-		schema.MustNullable("NullableNull"),
-		schema.MustBool("Value"),
-		schema.MustBool("ValueNullable").Nullable(),
-		schema.MustBool("ValueNullableNull").Nullable(),
-		schema.MustDefaultBool("Default", true),
-	)
-
-	expect := T{
-		Direct:            true,
-		Nullable:          ptr(false),
-		NullableNull:      false,
-		Value:             ptr(false),
-		ValueNullable:     true,
-		ValueNullableNull: nil,
-		Default:           true,
-	}
-
-	row := db.QueryRow("SELECT true, false, NULL, false, true, NULL, NULL")
-
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestTime(t *testing.T) {
-	type MyTime time.Time
+func TestOne(t *testing.T) {
+	t.Parallel()
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 
-	type T struct {
-		Direct            time.Time
-		Nullable          *time.Time
-		NullableNull      MyTime
-		Value             *MyTime
-		ValueNullable     time.Time
-		ValueNullableNull *time.Time
-		Default           time.Time
+	dest := structscan.NewSchema[Data]()
+
+	type Case struct {
+		Scanners []structscan.Scanner[Data]
+		SQL      string
+		Expect   Data
 	}
 
-	schema := structscan.New[T]()
-
-	time.Local = time.UTC
-	now := time.Now().UTC()
-
-	mapper := structscan.Map(
-		schema.MustField("Direct"),
-		schema.MustNullable("Nullable"),
-		schema.MustNullable("NullableNull"),
-		schema.MustTime("Value"),
-		schema.MustTime("ValueNullable").Nullable(),
-		schema.MustTime("ValueNullableNull").Nullable(),
-		schema.MustDefaultTime("Default", now),
-	)
-
-	expect := T{
-		Direct:            now,
-		Nullable:          ptr(now),
-		NullableNull:      MyTime{},
-		Value:             ptr(MyTime(now)),
-		ValueNullable:     now,
-		ValueNullableNull: nil,
-		Default:           now,
+	cases := []Case{
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().MustInto("String"),
+			},
+			SQL:    "SELECT 'hello'",
+			Expect: Data{String: "hello"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().MustInto("MyString"),
+			},
+			SQL:    "SELECT 'hello'",
+			Expect: Data{MyString: "hello"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().MustInto("NullString"),
+			},
+			SQL:    "SELECT 'hello'",
+			Expect: Data{NullString: sql.Null[string]{Valid: true, V: "hello"}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().MustInto("NullStringPointer"),
+			},
+			SQL:    "SELECT 'hello'",
+			Expect: Data{NullStringPointer: &sql.Null[string]{Valid: true, V: "hello"}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable(),
+			},
+			SQL:    "SELECT NULL",
+			Expect: Data{},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().MustInto("String"),
+			},
+			SQL:    "SELECT 'hello'",
+			Expect: Data{String: "hello"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().MustInto("Int16"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{Int16: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().MustInto("Float64"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{Float64: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().Add(50).Subtract(100).Multiply(2).MustInto("Int16"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{Int16: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().MustInto("Int32Pointer"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{Int32Pointer: ptr[int32](100)},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().Divide(2).MustInto("Float64"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{Float64: 50},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().Format(10).MustInto("MyString"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{MyString: "100"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().Uint().MustInto("Uint64"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{Uint64: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Uint().MustInto("Uint64"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{Uint64: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().MustInto("MyInt64"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{MyInt64: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().Uint().MustInto("Uint64"),
+			},
+			SQL:    "SELECT 100",
+			Expect: Data{Uint64: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Float().MustInto("Nested.Float64"),
+			},
+			SQL:    "SELECT 1.23",
+			Expect: Data{Nested: &Data{Float64: 1.23}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Float().MustInto("Nested.Float64"),
+			},
+			SQL:    "SELECT 1.23",
+			Expect: Data{Nested: &Data{Float64: 1.23}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Float().Uint().MustInto("Uint64"),
+			},
+			SQL:    "SELECT 1",
+			Expect: Data{Uint64: 1},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bool().MustInto("Nested.Bool"),
+			},
+			SQL:    "SELECT 'true'",
+			Expect: Data{Nested: &Data{Bool: true}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bytes().MustInto("Bytes"),
+			},
+			SQL:    "SELECT 'hello'",
+			Expect: Data{Bytes: []byte("hello")},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().String().MustInto("String"),
+			},
+			SQL:    "SELECT 'hello'",
+			Expect: Data{String: "hello"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().String().MustInto("String"),
+			},
+			SQL:    "SELECT NULL",
+			Expect: Data{String: ""},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Split(",").MustInto("Strings"),
+			},
+			SQL:    "SELECT 'hello,world'",
+			Expect: Data{Strings: []string{"hello", "world"}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Split(",").MustInto("Array"),
+			},
+			SQL:    "SELECT 'hello,world'",
+			Expect: Data{Array: [2]string{"hello", "world"}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Split(",").MustInto("Nested.StringPointers"),
+			},
+			SQL:    "SELECT 'hello,world'",
+			Expect: Data{Nested: &Data{StringPointers: []*string{ptr("hello"), ptr("world")}}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Int(10, 64).MustInto("Int16"),
+			},
+			SQL:    "SELECT '100'",
+			Expect: Data{Int16: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Uint(10, 64).MustInto("Uint64"),
+			},
+			SQL:    "SELECT '100'",
+			Expect: Data{Uint64: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Uint(10, 64).Int().MustInto("Int16"),
+			},
+			SQL:    "SELECT '100'",
+			Expect: Data{Int16: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Float(64).MustInto("Float64"),
+			},
+			SQL:    "SELECT '100'",
+			Expect: Data{Float64: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().MustInto("Nested.String"),
+			},
+			SQL:    "SELECT '100'",
+			Expect: Data{Nested: &Data{String: "100"}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Float(64).MustInto("Float64"),
+			},
+			SQL:    "SELECT '1.23'",
+			Expect: Data{Float64: 1.23},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Complex(64).MustInto("Complex64"),
+			},
+			SQL:    "SELECT '2+3i'",
+			Expect: Data{Complex64: complex64(2 + 3i)},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Time(time.DateOnly).MustInto("Time"),
+			},
+			SQL:    "SELECT '2200-01-07'",
+			Expect: Data{Time: must(time.Parse(time.DateOnly, "2200-01-07"))},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().TimeInLocation(time.DateOnly, time.UTC).MustInto("Time"),
+			},
+			SQL:    "SELECT '2200-01-07'",
+			Expect: Data{Time: must(time.ParseInLocation(time.DateOnly, "2200-01-07", time.UTC))},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().TimeInLocation(time.DateOnly, time.UTC).MustInto("TimePointer"),
+			},
+			SQL:    "SELECT '2200-01-07'",
+			Expect: Data{TimePointer: ptr(must(time.ParseInLocation(time.DateOnly, "2200-01-07", time.UTC)))},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().TrimSpace().Replace("Euro", "$", 1).Trim("$").Float(64).Add(2).Round().Int().MustInto("Int16"),
+			},
+			SQL:    "SELECT '   1.23Euro'",
+			Expect: Data{Int16: 3},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Float().Format('f', -1, 64).ReplaceAll(".", "").Int(10, 64).MustInto("Int16"),
+			},
+			SQL:    "SELECT 1.23",
+			Expect: Data{Int16: 123},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Duration().MustInto("Duration"),
+			},
+			SQL:    "SELECT 10",
+			Expect: Data{Duration: 10},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Duration().MustInto("Duration"),
+			},
+			SQL:    "SELECT '10m'",
+			Expect: Data{Duration: time.Minute * 10},
+		},
 	}
 
-	_, err = db.Exec("CREATE TABLE my_time ( value DATE )")
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, c := range cases {
+		t.Run(c.SQL, func(t *testing.T) {
+			t.Parallel()
 
-	_, err = db.Exec("INSERT INTO my_time (value) VALUES (?)", now)
-	if err != nil {
-		t.Fatal(err)
-	}
+			mapper, err := structscan.NewMapper(c.Scanners...)
+			if err != nil {
+				t.Fatal(c.SQL, err)
+			}
 
-	row := db.QueryRow("SELECT value, value, NULL, value, value, NULL, NULL FROM my_time")
+			result, err := mapper.QueryOne(t.Context(), db, c.SQL)
+			if err != nil {
+				t.Fatal(c.SQL, err)
+			}
 
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestBytes(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            []byte
-		Nullable          *[]byte
-		NullableNull      json.RawMessage
-		Value             *json.RawMessage
-		ValueNullable     []byte
-		ValueNullableNull *[]byte
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustField("Direct"),
-		schema.MustNullable("Nullable"),
-		schema.MustNullable("NullableNull"),
-		schema.MustBytes("Value"),
-		schema.MustBytes("ValueNullable").Nullable(),
-		schema.MustBytes("ValueNullableNull").Nullable(),
-	)
-
-	expect := T{
-		Direct:            []byte(`"hello"`),
-		Nullable:          ptr([]byte(`"hello"`)),
-		NullableNull:      nil,
-		Value:             ptr(json.RawMessage(`"hello"`)),
-		ValueNullable:     []byte(`"hello"`),
-		ValueNullableNull: nil,
-	}
-
-	rows, err := db.Query(`SELECT '"hello"', '"hello"', NULL, '"hello"', '"hello"', NULL`)
-
-	result, err := mapper.All(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result[0], expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestSplit(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            []string
-		Nullable          *[]string
-		NullableNull      [2]string
-		Value             *[2]*string
-		ValueNullable     []*string
-		ValueNullableNull *[]string
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustSplit("Direct", ","),
-		schema.MustSplit("Nullable", ",").Nullable(),
-		schema.MustSplit("NullableNull", ",").Nullable(),
-		schema.MustSplit("Value", ","),
-		schema.MustSplit("ValueNullable", ",").Nullable(),
-		schema.MustSplit("ValueNullableNull", ",").Nullable(),
-	)
-
-	expect := T{
-		Direct:            []string{"hello", "world"},
-		Nullable:          ptr([]string{"hello", "world"}),
-		NullableNull:      [2]string{},
-		Value:             ptr([2]*string{ptr("hello"), ptr("world")}),
-		ValueNullable:     []*string{ptr("hello"), ptr("world")},
-		ValueNullableNull: nil,
-	}
-
-	rows, err := db.Query(`SELECT 'hello,world', 'hello,world', NULL, 'hello,world', 'hello,world', NULL`)
-
-	result, err := mapper.All(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result[0], expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestParseInt(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            int64
-		Nullable          *int32
-		NullableNull      int16
-		Value             *int8
-		ValueNullable     int
-		ValueNullableNull *int64
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustParseInt("Direct", 10, 64),
-		schema.MustParseInt("Nullable", 10, 32).Nullable(),
-		schema.MustParseInt("NullableNull", 10, 16).Nullable(),
-		schema.MustParseInt("Value", 10, 8),
-		schema.MustParseInt("ValueNullable", 10, 64).Nullable(),
-		schema.MustParseInt("ValueNullableNull", 10, 64).Nullable(),
-	)
-
-	expect := T{
-		Direct:            1,
-		Nullable:          ptr[int32](2),
-		NullableNull:      0,
-		Value:             ptr[int8](3),
-		ValueNullable:     4,
-		ValueNullableNull: nil,
-	}
-
-	rows, err := db.Query("SELECT '1', '2', NULL, '3', '4', NULL")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestParseUint(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            uint64
-		Nullable          *uint32
-		NullableNull      uint16
-		Value             *uint8
-		ValueNullable     uint
-		ValueNullableNull *uint64
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustParseUint("Direct", 10, 64),
-		schema.MustParseUint("Nullable", 10, 32).Nullable(),
-		schema.MustParseUint("NullableNull", 10, 16).Nullable(),
-		schema.MustParseUint("Value", 10, 8),
-		schema.MustParseUint("ValueNullable", 10, 64).Nullable(),
-		schema.MustParseUint("ValueNullableNull", 10, 64).Nullable(),
-	)
-
-	expect := T{
-		Direct:            1,
-		Nullable:          ptr[uint32](2),
-		NullableNull:      0,
-		Value:             ptr[uint8](3),
-		ValueNullable:     4,
-		ValueNullableNull: nil,
-	}
-
-	rows, err := db.Query("SELECT '1', '2', NULL, '3', '4', NULL")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestParseFloat(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            float64
-		Nullable          *float64
-		NullableNull      float32
-		Value             *float32
-		ValueNullable     float64
-		ValueNullableNull *float64
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustParseFloat("Direct", 64),
-		schema.MustParseFloat("Nullable", 64).Nullable(),
-		schema.MustParseFloat("NullableNull", 64).Nullable(),
-		schema.MustParseFloat("Value", 64),
-		schema.MustParseFloat("ValueNullable", 64).Nullable(),
-		schema.MustParseFloat("ValueNullableNull", 64).Nullable(),
-	)
-
-	expect := T{
-		Direct:            1.23,
-		Nullable:          ptr(2.34),
-		NullableNull:      0,
-		Value:             ptr[float32](3.45),
-		ValueNullable:     4.56,
-		ValueNullableNull: nil,
-	}
-
-	row := db.QueryRow("SELECT '1.23', '2.34', NULL, '3.45', '4.56', NULL")
-
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestParseComplex(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            complex128
-		Nullable          *complex128
-		NullableNull      complex64
-		Value             *complex64
-		ValueNullable     complex128
-		ValueNullableNull *complex128
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustParseComplex("Direct", 128),
-		schema.MustParseComplex("Nullable", 128).Nullable(),
-		schema.MustParseComplex("NullableNull", 64).Nullable(),
-		schema.MustParseComplex("Value", 64),
-		schema.MustParseComplex("ValueNullable", 128).Nullable(),
-		schema.MustParseComplex("ValueNullableNull", 128).Nullable(),
-	)
-
-	expect := T{
-		Direct:            complex(10, 3),
-		Nullable:          ptr(complex(10, 3)),
-		NullableNull:      complex(0, 0),
-		Value:             ptr[complex64](complex(10, 3)),
-		ValueNullable:     complex(10, 3),
-		ValueNullableNull: nil,
-	}
-
-	row := db.QueryRow("SELECT '10+3i', '10+3i', NULL, '10+3i', '10+3i', NULL")
-
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+			if !reflect.DeepEqual(c.Expect, result) {
+				t.Fatalf("not equal: \n expected: %v \n   result: %v", c.Expect, result)
+			}
+		})
 	}
 }
 
-func TestParseBool(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            bool
-		Nullable          *bool
-		NullableNull      bool
-		Value             *bool
-		ValueNullable     bool
-		ValueNullableNull *bool
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustParseBool("Direct"),
-		schema.MustParseBool("Nullable").Nullable(),
-		schema.MustParseBool("NullableNull").Nullable(),
-		schema.MustParseBool("Value"),
-		schema.MustParseBool("ValueNullable").Nullable(),
-		schema.MustParseBool("ValueNullableNull").Nullable(),
-	)
-
-	expect := T{
-		Direct:            true,
-		Nullable:          ptr(false),
-		NullableNull:      false,
-		Value:             ptr(false),
-		ValueNullable:     true,
-		ValueNullableNull: nil,
-	}
-
-	row := db.QueryRow("SELECT 'true', '0', NULL, 'f', 't', NULL")
-
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestParseTime(t *testing.T) {
-	type MyTime time.Time
+func TestFirst(t *testing.T) {
+	t.Parallel()
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 
-	type T struct {
-		Direct            time.Time
-		Nullable          *time.Time
-		NullableNull      MyTime
-		Value             *MyTime
-		ValueNullable     time.Time
-		ValueNullableNull *time.Time
+	dest := structscan.NewSchema[Data]()
+
+	type Case struct {
+		Scanners []structscan.Scanner[Data]
+		SQL      string
+		Expect   Data
 	}
 
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustParseTime("Direct", time.DateOnly),
-		schema.MustParseTime("Nullable", time.DateOnly).Nullable(),
-		schema.MustParseTime("NullableNull", time.DateOnly).Nullable(),
-		schema.MustParseTime("Value", time.DateOnly),
-		schema.MustParseTime("ValueNullable", time.DateOnly).Nullable(),
-		schema.MustParseTime("ValueNullableNull", time.DateOnly).Nullable(),
-	)
-
-	date, err := time.Parse(time.DateOnly, "2020-12-31")
-	if err != nil {
-		t.Fatal(err)
+	cases := []Case{
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Enum(
+					structscan.Enum{String: "one", Int: 1},
+					structscan.Enum{String: "two", Int: 2},
+					structscan.Enum{String: "three", Int: 3},
+				).Float().MustInto("Float64"),
+			},
+			SQL:    "SELECT 'two'",
+			Expect: Data{Float64: 2},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Int().Enum(
+					structscan.Enum{String: "one", Int: 1},
+					structscan.Enum{String: "two", Int: 2},
+					structscan.Enum{String: "three", Int: 3},
+				).MustInto("String"),
+			},
+			SQL:    "SELECT 2",
+			Expect: Data{String: "two"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bytes().Binary().MustInto("URL"),
+			},
+			SQL:    "SELECT 'https://example.com/path?query=true'",
+			Expect: Data{URL: *must(url.Parse("https://example.com/path?query=true"))},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bytes().Binary().MustInto("URLPointer"),
+			},
+			SQL:    "SELECT 'https://example.com/path?query=true'",
+			Expect: Data{URLPointer: must(url.Parse("https://example.com/path?query=true"))},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Binary().MustInto("URLPointer"),
+			},
+			SQL:    "SELECT 'https://example.com/path?query=true'",
+			Expect: Data{URLPointer: must(url.Parse("https://example.com/path?query=true"))},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bytes().Text().MustInto("BigInt"),
+			},
+			SQL:    "SELECT '100'",
+			Expect: Data{BigInt: *big.NewInt(100)},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bytes().Text().MustInto("BigIntPointer"),
+			},
+			SQL:    "SELECT '100'",
+			Expect: Data{BigIntPointer: big.NewInt(100)},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bytes().MustInto("RawJSON"),
+			},
+			SQL:    `SELECT '{"hello":"world"}'`,
+			Expect: Data{RawJSON: json.RawMessage(`{"hello":"world"}`)},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bytes().JSON().MustInto("RawJSON"),
+			},
+			SQL:    `SELECT '{"hello":"earth"}'`,
+			Expect: Data{RawJSON: json.RawMessage(`{"hello":"earth"}`)},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().JSON().MustInto("RawJSON"),
+			},
+			SQL:    `SELECT '{"hello":"earth"}'`,
+			Expect: Data{RawJSON: json.RawMessage(`{"hello":"earth"}`)},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Bytes().JSON().MustInto("AnyMap"),
+			},
+			SQL:    `SELECT '{"hello":"moon"}'`,
+			Expect: Data{AnyMap: map[string]any{"hello": "moon"}},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().MustInto("String"),
+			},
+			SQL:    `SELECT '2300-01-07T10:30:00+00:00'`,
+			Expect: Data{String: "2300-01-07T10:30:00+00:00"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().Bool().MustInto("Bool"),
+			},
+			SQL:    `SELECT 'f'`,
+			Expect: Data{Bool: false},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().String().MustInto("StringPointer"),
+			},
+			SQL:    `SELECT 'hello'`,
+			Expect: Data{StringPointer: ptr("hello")},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().String().MustInto("String"),
+			},
+			SQL:    `SELECT 'hello'`,
+			Expect: Data{String: "hello"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().MustInto("StringPointer"),
+			},
+			SQL:    `SELECT 'hello'`,
+			Expect: Data{StringPointer: ptr("hello")},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().MustInto("String"),
+			},
+			SQL:    `SELECT 'hello'`,
+			Expect: Data{String: "hello"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().MustInto("String"),
+				dest.Scan().Nullable().MustInto("Int16"),
+			},
+			SQL:    `SELECT 'hello', 100`,
+			Expect: Data{String: "hello", Int16: 100},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().MustInto("String"),
+			},
+			SQL:    "SELECT NULL",
+			Expect: Data{},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().MustInto("StringPointer"),
+			},
+			SQL:    "SELECT NULL",
+			Expect: Data{},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().MustInto("StringPointerPointer"),
+			},
+			SQL:    "SELECT NULL",
+			Expect: Data{},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().MustInto("String"),
+			},
+			SQL:    "SELECT 'nullable'",
+			Expect: Data{String: "nullable"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().MustInto("StringPointer"),
+			},
+			SQL: "SELECT 'nullable'",
+			Expect: Data{
+				StringPointer: ptr("nullable"),
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().Nullable().MustInto("StringPointerPointer"),
+			},
+			SQL:    "SELECT 'nullable'",
+			Expect: Data{StringPointerPointer: ptr(ptr("nullable"))},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().MustInto("String"),
+			},
+			SQL:    "SELECT 'nullable'",
+			Expect: Data{String: "nullable"},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().MustInto("StringPointer"),
+			},
+			SQL: "SELECT 'nullable'",
+			Expect: Data{
+				StringPointer: ptr("nullable"),
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[Data]{
+				dest.Scan().MustInto("StringPointerPointer"),
+			},
+			SQL:    "SELECT 'nullable'",
+			Expect: Data{StringPointerPointer: ptr(ptr("nullable"))},
+		},
 	}
 
-	expect := T{
-		Direct:            date,
-		Nullable:          ptr(date),
-		NullableNull:      MyTime{},
-		Value:             ptr(MyTime(date)),
-		ValueNullable:     date,
-		ValueNullableNull: nil,
-	}
+	for _, c := range cases {
+		t.Run(c.SQL, func(t *testing.T) {
+			t.Parallel()
 
-	row := db.QueryRow("SELECT '2020-12-31', '2020-12-31', NULL, '2020-12-31', '2020-12-31', NULL")
+			mapper, err := structscan.NewMapper(c.Scanners...)
+			if err != nil {
+				t.Fatal(c.SQL, err)
+			}
 
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
+			result, err := mapper.QueryFirst(t.Context(), db, c.SQL)
+			if err != nil {
+				t.Fatal(c.SQL, err)
+			}
 
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+			if !reflect.DeepEqual(c.Expect, result) {
+				t.Fatalf("not equal: \n expected: %v \n   result: %v", c.Expect, result)
+			}
+		})
 	}
 }
 
-func TestParseTimeInLocation(t *testing.T) {
-	type MyTime time.Time
+func TestAll(t *testing.T) {
+	t.Parallel()
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 
-	type T struct {
-		Direct            time.Time
-		Nullable          *time.Time
-		NullableNull      MyTime
-		Value             *MyTime
-		ValueNullable     time.Time
-		ValueNullableNull *time.Time
+	dest := structscan.NewSchema[*Data]()
+
+	type Case struct {
+		Scanners []structscan.Scanner[*Data]
+		SQL      string
+		Expect   []*Data
 	}
 
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustParseTimeInLocation("Direct", time.DateOnly, time.UTC),
-		schema.MustParseTimeInLocation("Nullable", time.DateOnly, time.UTC).Nullable(),
-		schema.MustParseTimeInLocation("NullableNull", time.DateOnly, time.UTC).Nullable(),
-		schema.MustParseTimeInLocation("Value", time.DateOnly, time.UTC),
-		schema.MustParseTimeInLocation("ValueNullable", time.DateOnly, time.UTC).Nullable(),
-		schema.MustParseTimeInLocation("ValueNullableNull", time.DateOnly, time.UTC).Nullable(),
-	)
-
-	date, err := time.ParseInLocation(time.DateOnly, "2020-12-31", time.UTC)
-	if err != nil {
-		t.Fatal(err)
+	cases := []Case{
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().MustInto("String"),
+				dest.Scan().MustInto("Int16"),
+			},
+			SQL: `SELECT * FROM (VALUES ('one', 1), ('two', 2));`,
+			Expect: []*Data{
+				{String: "one", Int16: 1},
+				{String: "two", Int16: 2},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Bool().MustInto("Bool"),
+			},
+			SQL: `SELECT * FROM (VALUES ('true'), ('false'));`,
+			Expect: []*Data{
+				{Bool: true},
+				{Bool: false},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().MustInto("Float64"),
+			},
+			SQL: `SELECT * FROM (VALUES (3.14), (2.71));`,
+			Expect: []*Data{
+				{Float64: 3.14},
+				{Float64: 2.71},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Split(",").MustInto("Strings"),
+			},
+			SQL: `SELECT * FROM (VALUES ('foo,bar'), ('baz,qux'));`,
+			Expect: []*Data{
+				{Strings: []string{"foo", "bar"}},
+				{Strings: []string{"baz", "qux"}},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Float(64).MustInto("Float64"),
+			},
+			SQL: `SELECT * FROM (VALUES ('1.1'), ('2.2'));`,
+			Expect: []*Data{
+				{Float64: 1.1},
+				{Float64: 2.2},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Int(10, 64).MustInto("Int16"),
+			},
+			SQL: `SELECT * FROM (VALUES ('10'), ('20'));`,
+			Expect: []*Data{
+				{Int16: 10},
+				{Int16: 20},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Bool().MustInto("Bool"),
+			},
+			SQL: `SELECT * FROM (VALUES ('true'), ('false'));`,
+			Expect: []*Data{
+				{Bool: true},
+				{Bool: false},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Uint(10, 64).MustInto("Uint64"),
+			},
+			SQL: `SELECT * FROM (VALUES ('100'), ('200'));`,
+			Expect: []*Data{
+				{Uint64: 100},
+				{Uint64: 200},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().MustInto("StringPointer"),
+			},
+			SQL: `SELECT * FROM (VALUES ('hi'), ('bye'));`,
+			Expect: []*Data{
+				{StringPointer: ptr("hi")},
+				{StringPointer: ptr("bye")},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().Nullable().MustInto("String"),
+			},
+			SQL: `SELECT * FROM (VALUES ('a'), (NULL));`,
+			Expect: []*Data{
+				{String: "a"},
+				{String: ""},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Complex(128).MustInto("Complex64"),
+			},
+			SQL: `SELECT * FROM (VALUES ('1+2i'), ('3+4i'));`,
+			Expect: []*Data{
+				{Complex64: complex(1, 2)},
+				{Complex64: complex(3, 4)},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Time(time.DateOnly).MustInto("Time"),
+			},
+			SQL: `SELECT * FROM (VALUES ('2020-01-01'), ('2030-01-01'));`,
+			Expect: []*Data{
+				{Time: must(time.Parse(time.DateOnly, "2020-01-01"))},
+				{Time: must(time.Parse(time.DateOnly, "2030-01-01"))},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().Bytes().Text().MustInto("BigInt"),
+			},
+			SQL: `SELECT * FROM (VALUES ('123456789012345'), ('987654321098765'));`,
+			Expect: []*Data{
+				{BigInt: *big.NewInt(123456789012345)},
+				{BigInt: *big.NewInt(987654321098765)},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().Text().MustInto("BigInt"),
+			},
+			SQL: `SELECT * FROM (VALUES ('123456789012345'), ('987654321098765'));`,
+			Expect: []*Data{
+				{BigInt: *big.NewInt(123456789012345)},
+				{BigInt: *big.NewInt(987654321098765)},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().Nullable().MustInto("StringPointer"),
+			},
+			SQL: `SELECT * FROM (VALUES ('a'), (NULL));`,
+			Expect: []*Data{
+				{StringPointer: ptr("a")},
+				{},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().String().Split(",").MustInto("Array"),
+			},
+			SQL: `SELECT * FROM (VALUES ('a,b'), ('c,d'));`,
+			Expect: []*Data{
+				{Array: [2]string{"a", "b"}},
+				{Array: [2]string{"c", "d"}},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().Bytes().MustInto("Bytes"),
+			},
+			SQL: `SELECT * FROM (VALUES ('abc'), ('def'));`,
+			Expect: []*Data{
+				{Bytes: []byte("abc")},
+				{Bytes: []byte("def")},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().Bytes().JSON().MustInto("AnyMap"),
+			},
+			SQL: `SELECT * FROM (VALUES ('{"a":1}'), ('{"b":2}'));`,
+			Expect: []*Data{
+				{AnyMap: map[string]any{"a": float64(1)}},
+				{AnyMap: map[string]any{"b": float64(2)}},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().MustInto("Nested.String"),
+			},
+			SQL: `SELECT * FROM (VALUES ('nested1'), ('nested2'));`,
+			Expect: []*Data{
+				{Nested: &Data{String: "nested1"}},
+				{Nested: &Data{String: "nested2"}},
+			},
+		},
+		{
+			Scanners: []structscan.Scanner[*Data]{
+				dest.Scan().MustInto("Nested.Int16"),
+			},
+			SQL: `SELECT * FROM (VALUES (100), (200));`,
+			Expect: []*Data{
+				{Nested: &Data{Int16: 100}},
+				{Nested: &Data{Int16: 200}},
+			},
+		},
 	}
 
-	expect := T{
-		Direct:            date,
-		Nullable:          ptr(date),
-		NullableNull:      MyTime{},
-		Value:             ptr(MyTime(date)),
-		ValueNullable:     date,
-		ValueNullableNull: nil,
-	}
+	for _, c := range cases {
+		t.Run(c.SQL, func(t *testing.T) {
+			t.Parallel()
 
-	row := db.QueryRow("SELECT '2020-12-31', '2020-12-31', NULL, '2020-12-31', '2020-12-31', NULL")
+			mapper, err := structscan.NewMapper(c.Scanners...)
+			if err != nil {
+				t.Fatal(c.SQL, err)
+			}
 
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
+			results, err := mapper.QueryAll(t.Context(), db, c.SQL)
+			if err != nil {
+				t.Fatal(c.SQL, err)
+			}
 
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestStringEnum(t *testing.T) {
-	type Status string
-
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            Status
-		Nullable          *Status
-		NullableNull      Status
-		Value             *Status
-		ValueNullable     Status
-		ValueNullableNull *Status
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustStringEnum("Direct",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema.MustStringEnum("Nullable",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		).Nullable(),
-		schema.MustStringEnum("NullableNull",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		).Nullable(),
-		schema.MustStringEnum("Value",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema.MustStringEnum("ValueNullable",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		).Nullable(),
-		schema.MustStringEnum("ValueNullableNull",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		).Nullable(),
-	)
-
-	expect := T{
-		Direct:            "Active",
-		Nullable:          ptr[Status]("Inactive"),
-		NullableNull:      Status(""),
-		Value:             ptr(Status("Active")),
-		ValueNullable:     "Inactive",
-		ValueNullableNull: nil,
-	}
-
-	row := db.QueryRow("SELECT 1, 0, NULL, 1, 0, NULL")
-
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestIntEnum(t *testing.T) {
-	type Status int
-
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	type T struct {
-		Direct            Status
-		Nullable          *Status
-		NullableNull      Status
-		Value             *Status
-		ValueNullable     Status
-		ValueNullableNull *Status
-	}
-
-	schema := structscan.New[T]()
-
-	mapper := structscan.Map(
-		schema.MustIntEnum("Direct",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema.MustIntEnum("Nullable",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		).Nullable(),
-		schema.MustIntEnum("NullableNull",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		).Nullable(),
-		schema.MustIntEnum("Value",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		),
-		schema.MustIntEnum("ValueNullable",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		).Nullable(),
-		schema.MustIntEnum("ValueNullableNull",
-			structscan.Enum{String: "Inactive", Int: 0},
-			structscan.Enum{String: "Active", Int: 1},
-		).Nullable(),
-	)
-
-	expect := T{
-		Direct:            1,
-		Nullable:          ptr[Status](0),
-		NullableNull:      Status(0),
-		Value:             ptr(Status(1)),
-		ValueNullable:     0,
-		ValueNullableNull: nil,
-	}
-
-	row := db.QueryRow("SELECT 'Active', 'Inactive', NULL, 'Active', 'Inactive', NULL")
-
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestUnmarshalJSON(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	schema := structscan.New[map[string]any]()
-
-	mapper := structscan.Map(
-		schema.MustUnmarshalJSON(""),
-	)
-
-	expect := map[string]any{
-		"hello": "world",
-	}
-
-	row := db.QueryRow(`SELECT '{"hello": "world"}'`)
-
-	result, err := mapper.Row(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestUnmarshalBinary(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	schema := structscan.New[*url.URL]()
-
-	mapper := structscan.Map(
-		schema.MustUnmarshalBinary(""),
-	)
-
-	expect, err := url.Parse("https://localhost:1234/path?query=true")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rows, err := db.Query(`SELECT 'https://localhost:1234/path?query=true'`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
+			if !reflect.DeepEqual(c.Expect, results) {
+				t.Fatalf("not equal: \n expected: [%v %v] \n   result: [%v %v]",
+					*c.Expect[0], *c.Expect[1], *results[0], *results[1],
+				)
+			}
+		})
 	}
 }
 
-func TestUnmarshalText(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	schema := structscan.New[*big.Int]()
-
-	mapper := structscan.Map(
-		schema.MustUnmarshalText(""),
-	)
-
-	expect := big.NewInt(10)
-
-	rows, err := db.Query(`SELECT '10'`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
+func ptr[T any](t T) *T {
+	return &t
 }
 
-func TestSingleInt(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
+func must[T any](t T, err error) T {
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	schema := structscan.New[int64]()
-
-	mapper := structscan.Map(
-		schema.MustNullable(""),
-	)
-
-	expect := int64(10)
-
-	rows, err := db.Query(`SELECT 10`)
-	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestSingleString(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	mapper := structscan.Map(
-		structscan.New[string](),
-	)
-
-	expect := "10"
-
-	rows, err := db.Query(`SELECT '10'`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestSingleFloat(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	mapper := structscan.Map[float64]()
-
-	expect := 1.23
-
-	rows, err := db.Query(`SELECT 1.23`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
-}
-
-func TestSingleFloatDefault(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	mapper := structscan.Map(
-		structscan.New[float64]().MustDefaultFloat("", 1.23),
-	)
-
-	expect := 1.23
-
-	rows, err := db.Query(`SELECT NULL`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := mapper.One(rows)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !reflect.DeepEqual(result, expect) {
-		t.Fatalf("test error: \nresult: %v \nexpect: %v", result, expect)
-	}
+	return t
 }

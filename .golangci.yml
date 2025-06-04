@@ -9,13 +9,8 @@ linters:
     - wrapcheck
     - varnamelen
     - revive
-    - mnd
     - ireturn
     - err113
-    - exhaustive
-    - lll
-    - cyclop
-    - funlen
 
   exclusions:
     paths-except:
