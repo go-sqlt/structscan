@@ -2,7 +2,7 @@
 
 [![go.dev reference](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white)](https://pkg.go.dev/github.com/go-sqlt/structscan)
 [![GitHub tag (latest SemVer)](https://img.shields.io/github/tag/go-sqlt/structscan.svg?style=social)](https://github.com/go-sqlt/structscan/tags)
-[![Coverage](https://img.shields.io/badge/Coverage-80.5%25-brightgreen)](https://github.com/go-sqlt/structscan/actions)
+[![Coverage](https://img.shields.io/badge/Coverage-64.0%25-yellow)](https://github.com/go-sqlt/structscan/actions)
 
 **structscan** is a lightweight Go library that maps SQL query results to Go structs.
 
