@@ -1,3 +1,49 @@
+// Package structscan is a lightweight Go library that maps SQL query results to Go structs.
+//
+// Usage:
+/*
+
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/go-sqlt/structscan"
+	_ "modernc.org/sqlite"
+)
+
+type Data struct {
+	Int  uint64
+	Bool bool
+}
+
+func main() {
+	dest := structscan.NewSchema[Data]()
+
+	mapper, err := structscan.NewMapper(
+		dest.Scan().String().Int(10, 64).MustInto("Int"),
+		dest.Scan().MustInto("Bool"),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		panic(err)
+	}
+
+	data, err := mapper.QueryOne(context.Background(), db, "SELECT '2', true")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(data) // {2 true}
+}
+
+*/
 package structscan
 
 import (
@@ -774,7 +820,7 @@ func (s StringScanner[S, T]) Enum(enums ...Enum) IntScanner[S, T] {
 	})
 }
 
-func (s StringScanner[S, T]) ConvertStrings(conv Convert[string, []string]) StringSliceScanner[S, T] {
+func (s StringScanner[S, T]) ConvertStringSlice(conv Convert[string, []string]) StringSliceScanner[S, T] {
 	return StringSliceScanner[S, T]{
 		schema:   s.schema,
 		nullable: s.nullable,
@@ -790,7 +836,7 @@ func (s StringScanner[S, T]) ConvertStrings(conv Convert[string, []string]) Stri
 }
 
 func (s StringScanner[S, T]) Split(sep string) StringSliceScanner[S, T] {
-	return s.ConvertStrings(func(src string) ([]string, error) {
+	return s.ConvertStringSlice(func(src string) ([]string, error) {
 		if src == "" {
 			return nil, nil
 		}
@@ -2098,6 +2144,38 @@ func (s StringSliceScanner[S, T]) Scan() (any, func(*T) error) {
 
 func (s StringSliceScanner[S, T]) MustInto(path string) Scanner[T] {
 	return must(s.Into(path))
+}
+
+func (s StringSliceScanner[S, T]) Convert(conv Convert[[]string, []string]) StringSliceScanner[S, T] {
+	return StringSliceScanner[S, T]{
+		schema:   s.schema,
+		nullable: s.nullable,
+		convert: func(src S) ([]string, error) {
+			res, err := s.convert(src)
+			if err != nil {
+				return nil, err
+			}
+
+			return conv(res)
+		},
+	}
+}
+
+func (s StringSliceScanner[S, T]) Asc() StringSliceScanner[S, T] {
+	return s.Convert(func(src []string) ([]string, error) {
+		slices.Sort(src)
+
+		return src, nil
+	})
+}
+
+func (s StringSliceScanner[S, T]) Desc() StringSliceScanner[S, T] {
+	return s.Convert(func(src []string) ([]string, error) {
+		slices.Sort(src)
+		slices.Reverse(src)
+
+		return src, nil
+	})
 }
 
 //nolint:gochecknoglobals
