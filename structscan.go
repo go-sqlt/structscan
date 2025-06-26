@@ -23,8 +23,8 @@ func main() {
 	dest := structscan.NewSchema[Data]()
 
 	mapper, err := structscan.NewMapper(
-		dest.Scan().String().Int(10, 64).MustInto("Int"),
-		dest.Scan().MustInto("Bool"),
+		dest.Scan().String().Int(10, 64).MustTo("Int"),
+		dest.Scan().MustTo("Bool"),
 	)
 	if err != nil {
 		panic(err)
@@ -169,7 +169,22 @@ type runner[T any] struct {
 	set []func(t *T) error
 }
 
+func (r *runner[T]) init() {
+	if len(r.src) == 0 {
+		var d T
+
+		r.src = append(r.src, &d)
+		r.set = append(r.set, func(t *T) error {
+			*t = d
+
+			return nil
+		})
+	}
+}
+
 func (r *runner[T]) all(rows *sql.Rows) ([]T, error) {
+	r.init()
+
 	var result []T
 
 	for rows.Next() {
@@ -196,6 +211,8 @@ func (r *runner[T]) all(rows *sql.Rows) ([]T, error) {
 var ErrTooManyRows = errors.New("too many rows")
 
 func (r *runner[T]) one(rows *sql.Rows) (T, error) {
+	r.init()
+
 	var t T
 
 	if !rows.Next() {
@@ -222,6 +239,8 @@ func (r *runner[T]) one(rows *sql.Rows) (T, error) {
 }
 
 func (r *runner[T]) first(rows *sql.Rows) (T, error) {
+	r.init()
+
 	var t T
 
 	if !rows.Next() {
@@ -395,14 +414,14 @@ func (s SchemaScanner[T]) Nullable() SchemaScanner[T] {
 	return s
 }
 
-func (s SchemaScanner[T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s SchemaScanner[T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
 var scannerType = reflect.TypeFor[sql.Scanner]()
 
-func (s SchemaScanner[T]) Into(path string) (Scanner[T], error) {
+func (s SchemaScanner[T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -426,7 +445,7 @@ func (s SchemaScanner[T]) Into(path string) (Scanner[T], error) {
 }
 
 func (s SchemaScanner[T]) Scan() (any, func(t *T) error) {
-	return s.MustInto(".").Scan()
+	return s.MustTo(".").Scan()
 }
 
 func (s SchemaScanner[T]) String() StringScanner[string, T] {
@@ -517,6 +536,14 @@ func (s SchemaScanner[T]) Binary() BinaryScanner[sql.RawBytes, T] {
 	}
 }
 
+func (s SchemaScanner[T]) Assign(init func() Assigner) AssignScanner[T] {
+	return AssignScanner[T]{
+		schema:   s.schema,
+		nullable: s.nullable,
+		init:     init,
+	}
+}
+
 type fieldScanner[T any] struct {
 	field    Field[T]
 	nullable bool
@@ -558,11 +585,11 @@ type StringScanner[S, T any] struct {
 }
 
 func (s StringScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s StringScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s StringScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
@@ -572,7 +599,7 @@ var (
 )
 
 //nolint:dupl
-func (s StringScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s StringScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -852,11 +879,11 @@ type IntScanner[S, T any] struct {
 }
 
 func (s IntScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s IntScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s IntScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
@@ -865,7 +892,7 @@ var (
 	int64PointerType = reflect.TypeFor[*int64]()
 )
 
-func (s IntScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s IntScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -1082,11 +1109,11 @@ type UintScanner[S, T any] struct {
 }
 
 func (s UintScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s UintScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s UintScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
@@ -1095,7 +1122,7 @@ var (
 	uint64PointerType = reflect.TypeFor[*uint64]()
 )
 
-func (s UintScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s UintScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -1237,11 +1264,11 @@ type FloatScanner[S, T any] struct {
 }
 
 func (s FloatScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s FloatScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s FloatScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
@@ -1250,7 +1277,7 @@ var (
 	float64PointerType = reflect.TypeFor[*float64]()
 )
 
-func (s FloatScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s FloatScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -1428,11 +1455,11 @@ type ComplexScanner[S, T any] struct {
 }
 
 func (s ComplexScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s ComplexScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s ComplexScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
@@ -1441,7 +1468,7 @@ var (
 	complex128PointerType = reflect.TypeFor[*complex128]()
 )
 
-func (s ComplexScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s ComplexScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -1488,11 +1515,11 @@ type BoolScanner[S, T any] struct {
 }
 
 func (s BoolScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s BoolScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s BoolScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
@@ -1502,7 +1529,7 @@ var (
 )
 
 //nolint:dupl
-func (s BoolScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s BoolScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -1650,11 +1677,11 @@ type TimeScanner[S, T any] struct {
 }
 
 func (s TimeScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s TimeScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s TimeScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
@@ -1664,7 +1691,7 @@ var (
 )
 
 //nolint:dupl
-func (s TimeScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s TimeScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -1733,11 +1760,11 @@ type DurationScanner[S, T any] struct {
 }
 
 func (s DurationScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s DurationScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s DurationScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
@@ -1747,7 +1774,7 @@ var (
 )
 
 //nolint:dupl
-func (s DurationScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s DurationScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -1903,17 +1930,17 @@ type BytesScanner[S, T any] struct {
 }
 
 func (s BytesScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s BytesScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s BytesScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
 var bytesType = reflect.TypeFor[[]byte]()
 
-func (s BytesScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s BytesScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -1987,14 +2014,14 @@ type JSONScanner[S, T any] struct {
 }
 
 func (s JSONScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s JSONScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s JSONScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
-func (s JSONScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s JSONScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -2031,18 +2058,18 @@ type TextScanner[S, T any] struct {
 }
 
 func (s TextScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s TextScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s TextScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
 var unmarshalTextType = reflect.TypeFor[encoding.TextUnmarshaler]()
 
 //nolint:dupl
-func (s TextScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s TextScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -2085,18 +2112,18 @@ type BinaryScanner[S, T any] struct {
 }
 
 func (s BinaryScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s BinaryScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s BinaryScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 //nolint:gochecknoglobals
 var unmarshalBinaryType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
 
 //nolint:dupl
-func (s BinaryScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s BinaryScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -2139,11 +2166,11 @@ type StringSliceScanner[S, T any] struct {
 }
 
 func (s StringSliceScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustInto("").Scan()
+	return s.MustTo("").Scan()
 }
 
-func (s StringSliceScanner[S, T]) MustInto(path string) Scanner[T] {
-	return must(s.Into(path))
+func (s StringSliceScanner[S, T]) MustTo(path string) Scanner[T] {
+	return must(s.To(path))
 }
 
 func (s StringSliceScanner[S, T]) Convert(conv Convert[[]string, []string]) StringSliceScanner[S, T] {
@@ -2182,7 +2209,7 @@ func (s StringSliceScanner[S, T]) Desc() StringSliceScanner[S, T] {
 var stringSliceType = reflect.TypeFor[[]string]()
 
 //nolint:funlen,cyclop
-func (s StringSliceScanner[S, T]) Into(path string) (Scanner[T], error) {
+func (s StringSliceScanner[S, T]) To(path string) (Scanner[T], error) {
 	f, err := s.schema.Field(path)
 	if err != nil {
 		return nil, err
@@ -2243,6 +2270,42 @@ func (s StringSliceScanner[S, T]) Into(path string) (Scanner[T], error) {
 			}
 
 			return set(t, val)
+		},
+	}, nil
+}
+
+type Assigner interface {
+	Scan(src any) error
+	AssignTo(dst any) error
+}
+
+type AssignScanner[T any] struct {
+	schema   *Schema[T]
+	nullable bool
+	init     func() Assigner
+}
+
+func (s AssignScanner[T]) To(path string) (Scanner[T], error) {
+	f, err := s.schema.Field(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return valueFieldScanner[any, T]{
+		nullable: false,
+		field:    f,
+		setter: func(t *T, src any) error {
+			if !s.nullable && src == nil {
+				return fmt.Errorf("field %s: is not nullable", path)
+			}
+
+			a := s.init()
+
+			if err := a.Scan(src); err != nil {
+				return fmt.Errorf("field %s: %w", path, err)
+			}
+
+			return a.AssignTo(f.AccessDeref(t).Addr())
 		},
 	}, nil
 }

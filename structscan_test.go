@@ -70,28 +70,28 @@ func TestOne(t *testing.T) {
 	cases := []Case{
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().MustInto("String"),
+				dest.Scan().MustTo("String"),
 			},
 			SQL:    "SELECT 'hello'",
 			Expect: Data{String: "hello"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().MustInto("MyString"),
+				dest.Scan().String().MustTo("MyString"),
 			},
 			SQL:    "SELECT 'hello'",
 			Expect: Data{MyString: "hello"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().MustInto("NullString"),
+				dest.Scan().MustTo("NullString"),
 			},
 			SQL:    "SELECT 'hello'",
 			Expect: Data{NullString: sql.Null[string]{Valid: true, V: "hello"}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().MustInto("NullStringPointer"),
+				dest.Scan().MustTo("NullStringPointer"),
 			},
 			SQL:    "SELECT 'hello'",
 			Expect: Data{NullStringPointer: &sql.Null[string]{Valid: true, V: "hello"}},
@@ -105,245 +105,245 @@ func TestOne(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().MustInto("String"),
+				dest.Scan().String().MustTo("String"),
 			},
 			SQL:    "SELECT 'hello'",
 			Expect: Data{String: "hello"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().MustInto("Int16"),
+				dest.Scan().Int().MustTo("Int16"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{Int16: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().MustInto("Float64"),
+				dest.Scan().Int().MustTo("Float64"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{Float64: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().Add(50).Subtract(100).Multiply(2).MustInto("Int16"),
+				dest.Scan().Int().Add(50).Subtract(100).Multiply(2).MustTo("Int16"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{Int16: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().MustInto("Int32Pointer"),
+				dest.Scan().Int().MustTo("Int32Pointer"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{Int32Pointer: ptr[int32](100)},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().Divide(2).MustInto("Float64"),
+				dest.Scan().Int().Divide(2).MustTo("Float64"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{Float64: 50},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().Format(10).MustInto("MyString"),
+				dest.Scan().Int().Format(10).MustTo("MyString"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{MyString: "100"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().Uint().MustInto("Uint64"),
+				dest.Scan().Int().Uint().MustTo("Uint64"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{Uint64: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Uint().MustInto("Uint64"),
+				dest.Scan().Uint().MustTo("Uint64"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{Uint64: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().MustInto("MyInt64"),
+				dest.Scan().Int().MustTo("MyInt64"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{MyInt64: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Int().Uint().MustInto("Uint64"),
+				dest.Scan().Int().Uint().MustTo("Uint64"),
 			},
 			SQL:    "SELECT 100",
 			Expect: Data{Uint64: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Float().MustInto("Nested.Float64"),
+				dest.Scan().Float().MustTo("Nested.Float64"),
 			},
 			SQL:    "SELECT 1.23",
 			Expect: Data{Nested: &Data{Float64: 1.23}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Float().MustInto("Nested.Float64"),
+				dest.Scan().Float().MustTo("Nested.Float64"),
 			},
 			SQL:    "SELECT 1.23",
 			Expect: Data{Nested: &Data{Float64: 1.23}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Float().Uint().MustInto("Uint64"),
+				dest.Scan().Float().Uint().MustTo("Uint64"),
 			},
 			SQL:    "SELECT 1",
 			Expect: Data{Uint64: 1},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bool().MustInto("Nested.Bool"),
+				dest.Scan().Bool().MustTo("Nested.Bool"),
 			},
 			SQL:    "SELECT 'true'",
 			Expect: Data{Nested: &Data{Bool: true}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bytes().MustInto("Bytes"),
+				dest.Scan().Bytes().MustTo("Bytes"),
 			},
 			SQL:    "SELECT 'hello'",
 			Expect: Data{Bytes: []byte("hello")},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().String().MustInto("String"),
+				dest.Scan().Nullable().String().MustTo("String"),
 			},
 			SQL:    "SELECT 'hello'",
 			Expect: Data{String: "hello"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().String().MustInto("String"),
+				dest.Scan().Nullable().String().MustTo("String"),
 			},
 			SQL:    "SELECT NULL",
 			Expect: Data{String: ""},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Split(",").MustInto("Strings"),
+				dest.Scan().String().Split(",").MustTo("Strings"),
 			},
 			SQL:    "SELECT 'hello,world'",
 			Expect: Data{Strings: []string{"hello", "world"}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Split(",").MustInto("Array"),
+				dest.Scan().String().Split(",").MustTo("Array"),
 			},
 			SQL:    "SELECT 'hello,world'",
 			Expect: Data{Array: [2]string{"hello", "world"}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Split(",").MustInto("Nested.StringPointers"),
+				dest.Scan().String().Split(",").MustTo("Nested.StringPointers"),
 			},
 			SQL:    "SELECT 'hello,world'",
 			Expect: Data{Nested: &Data{StringPointers: []*string{ptr("hello"), ptr("world")}}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Int(10, 64).MustInto("Int16"),
+				dest.Scan().String().Int(10, 64).MustTo("Int16"),
 			},
 			SQL:    "SELECT '100'",
 			Expect: Data{Int16: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Uint(10, 64).MustInto("Uint64"),
+				dest.Scan().String().Uint(10, 64).MustTo("Uint64"),
 			},
 			SQL:    "SELECT '100'",
 			Expect: Data{Uint64: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Uint(10, 64).Int().MustInto("Int16"),
+				dest.Scan().String().Uint(10, 64).Int().MustTo("Int16"),
 			},
 			SQL:    "SELECT '100'",
 			Expect: Data{Int16: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Float(64).MustInto("Float64"),
+				dest.Scan().String().Float(64).MustTo("Float64"),
 			},
 			SQL:    "SELECT '100'",
 			Expect: Data{Float64: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().MustInto("Nested.String"),
+				dest.Scan().String().MustTo("Nested.String"),
 			},
 			SQL:    "SELECT '100'",
 			Expect: Data{Nested: &Data{String: "100"}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Float(64).MustInto("Float64"),
+				dest.Scan().String().Float(64).MustTo("Float64"),
 			},
 			SQL:    "SELECT '1.23'",
 			Expect: Data{Float64: 1.23},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Complex(64).MustInto("Complex64"),
+				dest.Scan().String().Complex(64).MustTo("Complex64"),
 			},
 			SQL:    "SELECT '2+3i'",
 			Expect: Data{Complex64: complex64(2 + 3i)},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Time(time.DateOnly).MustInto("Time"),
+				dest.Scan().String().Time(time.DateOnly).MustTo("Time"),
 			},
 			SQL:    "SELECT '2200-01-07'",
 			Expect: Data{Time: must(time.Parse(time.DateOnly, "2200-01-07"))},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().TimeInLocation(time.DateOnly, time.UTC).MustInto("Time"),
+				dest.Scan().String().TimeInLocation(time.DateOnly, time.UTC).MustTo("Time"),
 			},
 			SQL:    "SELECT '2200-01-07'",
 			Expect: Data{Time: must(time.ParseInLocation(time.DateOnly, "2200-01-07", time.UTC))},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().TimeInLocation(time.DateOnly, time.UTC).MustInto("TimePointer"),
+				dest.Scan().String().TimeInLocation(time.DateOnly, time.UTC).MustTo("TimePointer"),
 			},
 			SQL:    "SELECT '2200-01-07'",
 			Expect: Data{TimePointer: ptr(must(time.ParseInLocation(time.DateOnly, "2200-01-07", time.UTC)))},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().TrimSpace().Replace("Euro", "$", 1).Trim("$").Float(64).Add(2).Round().Int().MustInto("Int16"),
+				dest.Scan().String().TrimSpace().Replace("Euro", "$", 1).Trim("$").Float(64).Add(2).Round().Int().MustTo("Int16"),
 			},
 			SQL:    "SELECT '   1.23Euro'",
 			Expect: Data{Int16: 3},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Float().Format('f', -1, 64).ReplaceAll(".", "").Int(10, 64).MustInto("Int16"),
+				dest.Scan().Float().Format('f', -1, 64).ReplaceAll(".", "").Int(10, 64).MustTo("Int16"),
 			},
 			SQL:    "SELECT 1.23",
 			Expect: Data{Int16: 123},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Duration().MustInto("Duration"),
+				dest.Scan().Duration().MustTo("Duration"),
 			},
 			SQL:    "SELECT 10",
 			Expect: Data{Duration: 10},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Duration().MustInto("Duration"),
+				dest.Scan().String().Duration().MustTo("Duration"),
 			},
 			SQL:    "SELECT '10m'",
 			Expect: Data{Duration: time.Minute * 10},
@@ -394,7 +394,7 @@ func TestFirst(t *testing.T) {
 					structscan.Enum{String: "one", Int: 1},
 					structscan.Enum{String: "two", Int: 2},
 					structscan.Enum{String: "three", Int: 3},
-				).Float().MustInto("Float64"),
+				).Float().MustTo("Float64"),
 			},
 			SQL:    "SELECT 'two'",
 			Expect: Data{Float64: 2},
@@ -405,155 +405,155 @@ func TestFirst(t *testing.T) {
 					structscan.Enum{String: "one", Int: 1},
 					structscan.Enum{String: "two", Int: 2},
 					structscan.Enum{String: "three", Int: 3},
-				).MustInto("String"),
+				).MustTo("String"),
 			},
 			SQL:    "SELECT 2",
 			Expect: Data{String: "two"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bytes().Binary().MustInto("URL"),
+				dest.Scan().Bytes().Binary().MustTo("URL"),
 			},
 			SQL:    "SELECT 'https://example.com/path?query=true'",
 			Expect: Data{URL: *must(url.Parse("https://example.com/path?query=true"))},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bytes().Binary().MustInto("URLPointer"),
+				dest.Scan().Bytes().Binary().MustTo("URLPointer"),
 			},
 			SQL:    "SELECT 'https://example.com/path?query=true'",
 			Expect: Data{URLPointer: must(url.Parse("https://example.com/path?query=true"))},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Binary().MustInto("URLPointer"),
+				dest.Scan().Binary().MustTo("URLPointer"),
 			},
 			SQL:    "SELECT 'https://example.com/path?query=true'",
 			Expect: Data{URLPointer: must(url.Parse("https://example.com/path?query=true"))},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bytes().Text().MustInto("BigInt"),
+				dest.Scan().Bytes().Text().MustTo("BigInt"),
 			},
 			SQL:    "SELECT '100'",
 			Expect: Data{BigInt: *big.NewInt(100)},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bytes().Text().MustInto("BigIntPointer"),
+				dest.Scan().Bytes().Text().MustTo("BigIntPointer"),
 			},
 			SQL:    "SELECT '100'",
 			Expect: Data{BigIntPointer: big.NewInt(100)},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bytes().MustInto("RawJSON"),
+				dest.Scan().Bytes().MustTo("RawJSON"),
 			},
 			SQL:    `SELECT '{"hello":"world"}'`,
 			Expect: Data{RawJSON: json.RawMessage(`{"hello":"world"}`)},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bytes().JSON().MustInto("RawJSON"),
+				dest.Scan().Bytes().JSON().MustTo("RawJSON"),
 			},
 			SQL:    `SELECT '{"hello":"earth"}'`,
 			Expect: Data{RawJSON: json.RawMessage(`{"hello":"earth"}`)},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().JSON().MustInto("RawJSON"),
+				dest.Scan().JSON().MustTo("RawJSON"),
 			},
 			SQL:    `SELECT '{"hello":"earth"}'`,
 			Expect: Data{RawJSON: json.RawMessage(`{"hello":"earth"}`)},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Bytes().JSON().MustInto("AnyMap"),
+				dest.Scan().Bytes().JSON().MustTo("AnyMap"),
 			},
 			SQL:    `SELECT '{"hello":"moon"}'`,
 			Expect: Data{AnyMap: map[string]any{"hello": "moon"}},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().MustInto("String"),
+				dest.Scan().String().MustTo("String"),
 			},
 			SQL:    `SELECT '2300-01-07T10:30:00+00:00'`,
 			Expect: Data{String: "2300-01-07T10:30:00+00:00"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().Bool().MustInto("Bool"),
+				dest.Scan().String().Bool().MustTo("Bool"),
 			},
 			SQL:    `SELECT 'f'`,
 			Expect: Data{Bool: false},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().String().MustInto("StringPointer"),
+				dest.Scan().String().MustTo("StringPointer"),
 			},
 			SQL:    `SELECT 'hello'`,
 			Expect: Data{StringPointer: ptr("hello")},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().String().MustInto("String"),
+				dest.Scan().Nullable().String().MustTo("String"),
 			},
 			SQL:    `SELECT 'hello'`,
 			Expect: Data{String: "hello"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().MustInto("StringPointer"),
+				dest.Scan().MustTo("StringPointer"),
 			},
 			SQL:    `SELECT 'hello'`,
 			Expect: Data{StringPointer: ptr("hello")},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().MustInto("String"),
+				dest.Scan().Nullable().MustTo("String"),
 			},
 			SQL:    `SELECT 'hello'`,
 			Expect: Data{String: "hello"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().MustInto("String"),
-				dest.Scan().Nullable().MustInto("Int16"),
+				dest.Scan().Nullable().MustTo("String"),
+				dest.Scan().Nullable().MustTo("Int16"),
 			},
 			SQL:    `SELECT 'hello', 100`,
 			Expect: Data{String: "hello", Int16: 100},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().MustInto("String"),
+				dest.Scan().Nullable().MustTo("String"),
 			},
 			SQL:    "SELECT NULL",
 			Expect: Data{},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().MustInto("StringPointer"),
+				dest.Scan().Nullable().MustTo("StringPointer"),
 			},
 			SQL:    "SELECT NULL",
 			Expect: Data{},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().MustInto("StringPointerPointer"),
+				dest.Scan().Nullable().MustTo("StringPointerPointer"),
 			},
 			SQL:    "SELECT NULL",
 			Expect: Data{},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().MustInto("String"),
+				dest.Scan().Nullable().MustTo("String"),
 			},
 			SQL:    "SELECT 'nullable'",
 			Expect: Data{String: "nullable"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().MustInto("StringPointer"),
+				dest.Scan().Nullable().MustTo("StringPointer"),
 			},
 			SQL: "SELECT 'nullable'",
 			Expect: Data{
@@ -562,21 +562,21 @@ func TestFirst(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().Nullable().MustInto("StringPointerPointer"),
+				dest.Scan().Nullable().MustTo("StringPointerPointer"),
 			},
 			SQL:    "SELECT 'nullable'",
 			Expect: Data{StringPointerPointer: ptr(ptr("nullable"))},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().MustInto("String"),
+				dest.Scan().MustTo("String"),
 			},
 			SQL:    "SELECT 'nullable'",
 			Expect: Data{String: "nullable"},
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().MustInto("StringPointer"),
+				dest.Scan().MustTo("StringPointer"),
 			},
 			SQL: "SELECT 'nullable'",
 			Expect: Data{
@@ -585,7 +585,7 @@ func TestFirst(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[Data]{
-				dest.Scan().MustInto("StringPointerPointer"),
+				dest.Scan().MustTo("StringPointerPointer"),
 			},
 			SQL:    "SELECT 'nullable'",
 			Expect: Data{StringPointerPointer: ptr(ptr("nullable"))},
@@ -632,8 +632,8 @@ func TestAll(t *testing.T) {
 	cases := []Case{
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().MustInto("String"),
-				dest.Scan().MustInto("Int16"),
+				dest.Scan().MustTo("String"),
+				dest.Scan().MustTo("Int16"),
 			},
 			SQL: `SELECT * FROM (VALUES ('one', 1), ('two', 2));`,
 			Expect: []*Data{
@@ -643,7 +643,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Bool().MustInto("Bool"),
+				dest.Scan().String().Bool().MustTo("Bool"),
 			},
 			SQL: `SELECT * FROM (VALUES ('true'), ('false'));`,
 			Expect: []*Data{
@@ -653,7 +653,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().MustInto("Float64"),
+				dest.Scan().MustTo("Float64"),
 			},
 			SQL: `SELECT * FROM (VALUES (3.14), (2.71));`,
 			Expect: []*Data{
@@ -663,7 +663,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Split(",").MustInto("Strings"),
+				dest.Scan().String().Split(",").MustTo("Strings"),
 			},
 			SQL: `SELECT * FROM (VALUES ('foo,bar'), ('baz,qux'));`,
 			Expect: []*Data{
@@ -673,7 +673,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Float(64).MustInto("Float64"),
+				dest.Scan().String().Float(64).MustTo("Float64"),
 			},
 			SQL: `SELECT * FROM (VALUES ('1.1'), ('2.2'));`,
 			Expect: []*Data{
@@ -683,7 +683,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Int(10, 64).MustInto("Int16"),
+				dest.Scan().String().Int(10, 64).MustTo("Int16"),
 			},
 			SQL: `SELECT * FROM (VALUES ('10'), ('20'));`,
 			Expect: []*Data{
@@ -693,7 +693,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Bool().MustInto("Bool"),
+				dest.Scan().String().Bool().MustTo("Bool"),
 			},
 			SQL: `SELECT * FROM (VALUES ('true'), ('false'));`,
 			Expect: []*Data{
@@ -703,7 +703,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Uint(10, 64).MustInto("Uint64"),
+				dest.Scan().String().Uint(10, 64).MustTo("Uint64"),
 			},
 			SQL: `SELECT * FROM (VALUES ('100'), ('200'));`,
 			Expect: []*Data{
@@ -713,7 +713,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().MustInto("StringPointer"),
+				dest.Scan().String().MustTo("StringPointer"),
 			},
 			SQL: `SELECT * FROM (VALUES ('hi'), ('bye'));`,
 			Expect: []*Data{
@@ -723,7 +723,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().Nullable().MustInto("String"),
+				dest.Scan().Nullable().MustTo("String"),
 			},
 			SQL: `SELECT * FROM (VALUES ('a'), (NULL));`,
 			Expect: []*Data{
@@ -733,7 +733,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Complex(128).MustInto("Complex64"),
+				dest.Scan().String().Complex(128).MustTo("Complex64"),
 			},
 			SQL: `SELECT * FROM (VALUES ('1+2i'), ('3+4i'));`,
 			Expect: []*Data{
@@ -743,7 +743,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Time(time.DateOnly).MustInto("Time"),
+				dest.Scan().String().Time(time.DateOnly).MustTo("Time"),
 			},
 			SQL: `SELECT * FROM (VALUES ('2020-01-01'), ('2030-01-01'));`,
 			Expect: []*Data{
@@ -753,7 +753,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().Bytes().Text().MustInto("BigInt"),
+				dest.Scan().Bytes().Text().MustTo("BigInt"),
 			},
 			SQL: `SELECT * FROM (VALUES ('123456789012345'), ('987654321098765'));`,
 			Expect: []*Data{
@@ -763,7 +763,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().Text().MustInto("BigInt"),
+				dest.Scan().Text().MustTo("BigInt"),
 			},
 			SQL: `SELECT * FROM (VALUES ('123456789012345'), ('987654321098765'));`,
 			Expect: []*Data{
@@ -773,7 +773,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().Nullable().MustInto("StringPointer"),
+				dest.Scan().Nullable().MustTo("StringPointer"),
 			},
 			SQL: `SELECT * FROM (VALUES ('a'), (NULL));`,
 			Expect: []*Data{
@@ -783,7 +783,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().String().Split(",").MustInto("Array"),
+				dest.Scan().String().Split(",").MustTo("Array"),
 			},
 			SQL: `SELECT * FROM (VALUES ('a,b'), ('c,d'));`,
 			Expect: []*Data{
@@ -793,7 +793,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().Bytes().MustInto("Bytes"),
+				dest.Scan().Bytes().MustTo("Bytes"),
 			},
 			SQL: `SELECT * FROM (VALUES ('abc'), ('def'));`,
 			Expect: []*Data{
@@ -803,7 +803,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().Bytes().JSON().MustInto("AnyMap"),
+				dest.Scan().Bytes().JSON().MustTo("AnyMap"),
 			},
 			SQL: `SELECT * FROM (VALUES ('{"a":1}'), ('{"b":2}'));`,
 			Expect: []*Data{
@@ -813,7 +813,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().MustInto("Nested.String"),
+				dest.Scan().MustTo("Nested.String"),
 			},
 			SQL: `SELECT * FROM (VALUES ('nested1'), ('nested2'));`,
 			Expect: []*Data{
@@ -823,7 +823,7 @@ func TestAll(t *testing.T) {
 		},
 		{
 			Scanners: []structscan.Scanner[*Data]{
-				dest.Scan().MustInto("Nested.Int16"),
+				dest.Scan().MustTo("Nested.Int16"),
 			},
 			SQL: `SELECT * FROM (VALUES (100), (200));`,
 			Expect: []*Data{
