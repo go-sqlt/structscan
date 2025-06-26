@@ -33,8 +33,8 @@ func main() {
 	dest := structscan.NewSchema[Data]()
 
 	mapper, err := structscan.NewMapper(
-		dest.Scan().String().Int(10, 64).MustInto("Int"),
-		dest.Scan().MustInto("Bool"),
+		dest.Scan().String().Int(10, 64).MustTo("Int"),
+		dest.Scan().MustTo("Bool"),
 	)
 	if err != nil {
 		panic(err)
