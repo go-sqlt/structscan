@@ -2305,7 +2305,7 @@ func (s AssignScanner[T]) To(path string) (Scanner[T], error) {
 				return fmt.Errorf("field %s: %w", path, err)
 			}
 
-			return a.AssignTo(f.AccessDeref(t).Addr())
+			return a.AssignTo(f.AccessDeref(t).Addr().Interface())
 		},
 	}, nil
 }
