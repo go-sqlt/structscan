@@ -1060,6 +1060,14 @@ func (s BytesScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, c
 		}, nil
 	}
 
+	if dstType == jsonMessageType {
+		return func(dst reflect.Value, conv []byte) error {
+			dst.SetBytes(conv)
+
+			return nil
+		}, nil
+	}
+
 	if bytesType.ConvertibleTo(dstType) {
 		return func(dst reflect.Value, conv []byte) error {
 			dst.Set(reflect.ValueOf(conv).Convert(dstType))
@@ -1295,7 +1303,17 @@ func (s JSONScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) err
 	return s.To("").Scan(typ)
 }
 
-func (s JSONScanner[S]) setter(_ reflect.Type) (func(dst reflect.Value, conv []byte) error, error) {
+var jsonMessageType = reflect.TypeFor[json.RawMessage]()
+
+func (s JSONScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []byte) error, error) {
+	if dstType == jsonMessageType {
+		return func(dst reflect.Value, conv []byte) error {
+			dst.SetBytes(conv)
+
+			return nil
+		}, nil
+	}
+
 	return func(dst reflect.Value, conv []byte) error {
 		return json.Unmarshal(conv, dst.Addr().Interface())
 	}, nil
