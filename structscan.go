@@ -402,36 +402,36 @@ func (s DefaultScanner) IntSlice() IntSliceScanner[[]int64] {
 	}
 }
 
-func JSON() JSONScanner[sql.RawBytes] {
+func JSON() JSONScanner[[]byte] {
 	return DefaultScanner{nullable: false}.JSON()
 }
 
-func (s DefaultScanner) JSON() JSONScanner[sql.RawBytes] {
-	return JSONScanner[sql.RawBytes]{
+func (s DefaultScanner) JSON() JSONScanner[[]byte] {
+	return JSONScanner[[]byte]{
 		nullable: s.nullable,
-		convert:  func(src sql.RawBytes) (sql.RawBytes, error) { return src, nil },
+		convert:  func(src []byte) ([]byte, error) { return src, nil },
 	}
 }
 
-func Text() TextScanner[sql.RawBytes] {
+func Text() TextScanner[[]byte] {
 	return DefaultScanner{nullable: false}.Text()
 }
 
-func (s DefaultScanner) Text() TextScanner[sql.RawBytes] {
-	return TextScanner[sql.RawBytes]{
+func (s DefaultScanner) Text() TextScanner[[]byte] {
+	return TextScanner[[]byte]{
 		nullable: s.nullable,
-		convert:  func(src sql.RawBytes) (sql.RawBytes, error) { return src, nil },
+		convert:  func(src []byte) ([]byte, error) { return src, nil },
 	}
 }
 
-func Binary() BinaryScanner[sql.RawBytes] {
+func Binary() BinaryScanner[[]byte] {
 	return DefaultScanner{nullable: false}.Binary()
 }
 
-func (s DefaultScanner) Binary() BinaryScanner[sql.RawBytes] {
-	return BinaryScanner[sql.RawBytes]{
+func (s DefaultScanner) Binary() BinaryScanner[[]byte] {
+	return BinaryScanner[[]byte]{
 		nullable: s.nullable,
-		convert:  func(src sql.RawBytes) (sql.RawBytes, error) { return src, nil },
+		convert:  func(src []byte) ([]byte, error) { return src, nil },
 	}
 }
 
@@ -1284,7 +1284,7 @@ func (s IntSliceScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value
 
 type JSONScanner[S any] struct {
 	nullable bool
-	convert  func(src S) (sql.RawBytes, error)
+	convert  func(src S) ([]byte, error)
 }
 
 func (s JSONScanner[S]) To(path string) Scanner {
@@ -1295,15 +1295,15 @@ func (s JSONScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) err
 	return s.To("").Scan(typ)
 }
 
-func (s JSONScanner[S]) setter(_ reflect.Type) (func(dst reflect.Value, conv sql.RawBytes) error, error) {
-	return func(dst reflect.Value, conv sql.RawBytes) error {
+func (s JSONScanner[S]) setter(_ reflect.Type) (func(dst reflect.Value, conv []byte) error, error) {
+	return func(dst reflect.Value, conv []byte) error {
 		return json.Unmarshal(conv, dst.Addr().Interface())
 	}, nil
 }
 
 type TextScanner[S any] struct {
 	nullable bool
-	convert  func(src S) (sql.RawBytes, error)
+	convert  func(src S) ([]byte, error)
 }
 
 func (s TextScanner[S]) To(path string) Scanner {
@@ -1316,9 +1316,9 @@ func (s TextScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) err
 
 var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
 
-func (s TextScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv sql.RawBytes) error, error) {
+func (s TextScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []byte) error, error) {
 	if reflect.PointerTo(dstType).Implements(textUnmarshalerType) {
-		return func(dst reflect.Value, conv sql.RawBytes) error {
+		return func(dst reflect.Value, conv []byte) error {
 			//nolint:forcetypeassert
 			return dst.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(conv)
 		}, nil
@@ -1329,7 +1329,7 @@ func (s TextScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, co
 
 type BinaryScanner[S any] struct {
 	nullable bool
-	convert  func(src S) (sql.RawBytes, error)
+	convert  func(src S) ([]byte, error)
 }
 
 func (s BinaryScanner[S]) To(path string) Scanner {
@@ -1342,9 +1342,9 @@ func (s BinaryScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) e
 
 var binaryUnmarshalerType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
 
-func (s BinaryScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv sql.RawBytes) error, error) {
+func (s BinaryScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []byte) error, error) {
 	if reflect.PointerTo(dstType).Implements(binaryUnmarshalerType) {
-		return func(dst reflect.Value, conv sql.RawBytes) error {
+		return func(dst reflect.Value, conv []byte) error {
 			//nolint:forcetypeassert
 			return dst.Addr().Interface().(encoding.BinaryUnmarshaler).UnmarshalBinary(conv)
 		}, nil
