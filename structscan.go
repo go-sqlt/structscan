@@ -1,12 +1,10 @@
 // Package structscan is a lightweight Go library that maps SQL query results to Go structs.
 //
-// Usage:
 /*
 
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 
@@ -15,16 +13,16 @@ import (
 )
 
 type Data struct {
-	Int  uint64
+	ID   int64
 	Bool bool
 }
 
 func main() {
-	dest := structscan.NewSchema[Data]()
-
-	mapper, err := structscan.NewMapper(
-		dest.Scan().String().Int(10, 64).MustTo("Int"),
-		dest.Scan().MustTo("Bool"),
+	scan, err := structscan.New[Data](
+		structscan.String().Enum(
+			structscan.Enum{String: "1", Int: 1},
+			structscan.Enum{String: "2", Int: 2}).To("ID"),
+		structscan.String().TrimSpace().ParseBool().To("Bool"),
 	)
 	if err != nil {
 		panic(err)
@@ -35,7 +33,14 @@ func main() {
 		panic(err)
 	}
 
-	data, err := mapper.QueryOne(context.Background(), db, "SELECT '2', true")
+	rows, err := db.Query("SELECT '2', '   true   '")
+	if err != nil {
+		panic(err)
+	}
+
+	defer rows.Close()
+
+	data, err := scan.One(rows)
 	if err != nil {
 		panic(err)
 	}
@@ -47,7 +52,6 @@ func main() {
 package structscan
 
 import (
-	"context"
 	"database/sql"
 	"encoding"
 	"encoding/json"
@@ -60,144 +64,155 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 )
 
-type DB interface {
-	QueryContext(ctx context.Context, sql string, args ...any) (*sql.Rows, error)
+type Rows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
 }
 
-func NewMapper[T any](scanners ...Scanner[T]) (*Mapper[T], error) {
-	return &Mapper[T]{
+func New[T any](scanners ...Scanner) (*Schema[T], error) {
+	schema := &Schema[T]{
 		pool: &sync.Pool{
 			New: func() any {
-				return newRunner(scanners...)
+				runner, err := NewRunner[T](scanners...)
+				if err != nil {
+					return err
+				}
+
+				return runner
 			},
 		},
-	}, nil
-}
+	}
 
-type Mapper[T any] struct {
-	pool *sync.Pool
-}
-
-func (m *Mapper[T]) QueryAll(ctx context.Context, db DB, sql string, args ...any) ([]T, error) {
-	rows, err := db.QueryContext(ctx, sql, args...)
+	runner, err := schema.GetRunner()
 	if err != nil {
 		return nil, err
 	}
 
-	return m.All(rows)
+	schema.PutRunner(runner)
+
+	return schema, nil
 }
 
-func (m *Mapper[T]) QueryOne(ctx context.Context, db DB, sql string, args ...any) (T, error) {
-	rows, err := db.QueryContext(ctx, sql, args...)
+type Schema[T any] struct {
+	pool *sync.Pool
+}
+
+func (s *Schema[T]) GetRunner() (*Runner[T], error) {
+	switch r := s.pool.Get().(type) {
+	case *Runner[T]:
+		return r, nil
+	case error:
+		return nil, r
+	}
+
+	return nil, fmt.Errorf("invalid runner")
+}
+
+func (s *Schema[T]) PutRunner(r *Runner[T]) {
+	s.pool.Put(r)
+}
+
+func (s *Schema[T]) All(rows Rows) ([]T, error) {
+	runner, err := s.GetRunner()
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := runner.All(rows)
+
+	s.PutRunner(runner)
+
+	return result, err
+}
+
+func (s *Schema[T]) One(rows Rows) (T, error) {
+	runner, err := s.GetRunner()
 	if err != nil {
 		return *new(T), err
 	}
 
-	return m.One(rows)
+	result, err := runner.One(rows)
+
+	s.PutRunner(runner)
+
+	return result, err
 }
 
-func (m *Mapper[T]) QueryFirst(ctx context.Context, db DB, sql string, args ...any) (T, error) {
-	rows, err := db.QueryContext(ctx, sql, args...)
+func (s *Schema[T]) First(rows Rows) (T, error) {
+	runner, err := s.GetRunner()
 	if err != nil {
 		return *new(T), err
 	}
 
-	return m.First(rows)
-}
+	result, err := runner.First(rows)
 
-func (m *Mapper[T]) All(rows *sql.Rows) ([]T, error) {
-	//nolint:forcetypeassert
-	runner := m.pool.Get().(*runner[T])
-
-	result, err := runner.all(rows)
-
-	m.pool.Put(runner)
+	s.PutRunner(runner)
 
 	return result, err
 }
 
-func (m *Mapper[T]) One(rows *sql.Rows) (T, error) {
-	//nolint:forcetypeassert
-	runner := m.pool.Get().(*runner[T])
-
-	result, err := runner.one(rows)
-
-	m.pool.Put(runner)
-
-	return result, err
-}
-
-func (m *Mapper[T]) First(rows *sql.Rows) (T, error) {
-	//nolint:forcetypeassert
-	runner := m.pool.Get().(*runner[T])
-
-	result, err := runner.first(rows)
-
-	m.pool.Put(runner)
-
-	return result, err
-}
-
-func newRunner[T any](scanners ...Scanner[T]) *runner[T] {
+func NewRunner[T any](scanners ...Scanner) (*Runner[T], error) {
 	if len(scanners) == 0 {
-		return &runner[T]{
-			src: []any{},
-			set: nil,
-		}
+		var typ = derefType(reflect.TypeFor[T]())
+		var val = reflect.New(typ)
+
+		return &Runner[T]{
+			Src: []any{val.Interface()},
+			Set: []func(dst reflect.Value) error{
+				func(dst reflect.Value) error {
+					dst.Set(val.Elem())
+
+					return nil
+				},
+			},
+		}, nil
 	}
 
 	var (
+		typ = derefType(reflect.TypeFor[T]())
 		src = make([]any, len(scanners))
-		set = make([]func(t *T) error, len(scanners))
+		set = make([]func(dst reflect.Value) error, len(scanners))
+		err error
 	)
 
 	for i, s := range scanners {
-		src[i], set[i] = s.Scan()
+		src[i], set[i], err = s.Scan(typ)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return &runner[T]{
-		src: src,
-		set: set,
-	}
+	return &Runner[T]{
+		Src: src,
+		Set: set,
+	}, nil
 }
 
-type runner[T any] struct {
-	src []any
-	set []func(t *T) error
+type Runner[T any] struct {
+	Src []any
+	Set []func(dst reflect.Value) error
 }
 
-func (r *runner[T]) init() {
-	if len(r.src) == 0 {
-		var d T
-
-		r.src = append(r.src, &d)
-		r.set = append(r.set, func(t *T) error {
-			*t = d
-
-			return nil
-		})
-	}
-}
-
-func (r *runner[T]) all(rows *sql.Rows) ([]T, error) {
-	r.init()
-
+func (r *Runner[T]) All(rows Rows) ([]T, error) {
 	var result []T
 
 	for rows.Next() {
-		if err := rows.Scan(r.src...); err != nil {
-			return nil, errors.Join(err, rows.Close())
+		if err := rows.Scan(r.Src...); err != nil {
+			return nil, err
 		}
 
-		var t T
+		var (
+			t   T
+			dst = deref(reflect.ValueOf(&t))
+		)
 
-		for i, set := range r.set {
+		for i, set := range r.Set {
 			if set != nil {
-				if err := set(&t); err != nil {
-					return nil, errors.Join(fmt.Errorf("scanner at position %d: %w", i, err), rows.Close())
+				if err := set(dst); err != nil {
+					return nil, fmt.Errorf("scanner at position %d: %w", i, err)
 				}
 			}
 		}
@@ -205,485 +220,267 @@ func (r *runner[T]) all(rows *sql.Rows) ([]T, error) {
 		result = append(result, t)
 	}
 
-	return result, errors.Join(rows.Err(), rows.Close())
+	return result, rows.Err()
 }
 
 var ErrTooManyRows = errors.New("too many rows")
 
-func (r *runner[T]) one(rows *sql.Rows) (T, error) {
-	r.init()
-
-	var t T
+func (r *Runner[T]) One(rows Rows) (T, error) {
+	var (
+		t   T
+		dst = deref(reflect.ValueOf(&t))
+	)
 
 	if !rows.Next() {
-		return t, errors.Join(sql.ErrNoRows, rows.Close())
+		return t, sql.ErrNoRows
 	}
 
-	if err := rows.Scan(r.src...); err != nil {
-		return t, errors.Join(err, rows.Close())
+	if err := rows.Scan(r.Src...); err != nil {
+		return t, err
 	}
 
-	for _, set := range r.set {
+	for _, set := range r.Set {
 		if set != nil {
-			if err := set(&t); err != nil {
-				return t, errors.Join(err, rows.Close())
+			if err := set(dst); err != nil {
+				return t, err
 			}
 		}
 	}
 
 	if rows.Next() {
-		return t, errors.Join(ErrTooManyRows, rows.Close())
+		return t, ErrTooManyRows
 	}
 
-	return t, errors.Join(rows.Err(), rows.Close())
+	return t, rows.Err()
 }
 
-func (r *runner[T]) first(rows *sql.Rows) (T, error) {
-	r.init()
-
-	var t T
+func (r *Runner[T]) First(rows Rows) (T, error) {
+	var (
+		t   T
+		dst = deref(reflect.ValueOf(&t))
+	)
 
 	if !rows.Next() {
-		return t, errors.Join(sql.ErrNoRows, rows.Close())
+		return t, sql.ErrNoRows
 	}
 
-	if err := rows.Scan(r.src...); err != nil {
-		return t, errors.Join(err, rows.Close())
+	if err := rows.Scan(r.Src...); err != nil {
+		return t, err
 	}
 
-	for _, set := range r.set {
+	for _, set := range r.Set {
 		if set != nil {
-			if err := set(&t); err != nil {
-				return t, errors.Join(err, rows.Close())
+			if err := set(dst); err != nil {
+				return t, err
 			}
 		}
 	}
 
-	return t, errors.Join(rows.Err(), rows.Close())
+	return t, rows.Err()
 }
 
-type Scanner[T any] interface {
-	Scan() (any, func(t *T) error)
+type Scanner interface {
+	Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error)
 }
 
-type Field[T any] struct {
-	Type      reflect.Type
-	DerefType reflect.Type
-	DerefKind reflect.Kind
-	Indices   []int
-	Offset    uintptr
+func Scan() DefaultScanner {
+	return DefaultScanner{}
 }
 
-func (f Field[T]) AccessDeref(t *T) reflect.Value {
-	return derefDst(f.Access(t))
-}
-
-func (f Field[T]) Access(t *T) reflect.Value {
-	if f.Offset > 0 {
-		return reflect.NewAt(f.Type, f.Pointer(t)).Elem()
-	}
-
-	dst := reflect.ValueOf(t).Elem()
-
-	for _, idx := range f.Indices {
-		dst = derefDst(dst).Field(idx)
-	}
-
-	return dst
-}
-
-func (f Field[T]) Pointer(t *T) unsafe.Pointer {
-	if f.Offset > 0 {
-		//nolint:gosec
-		return unsafe.Pointer(uintptr(unsafe.Pointer(t)) + f.Offset)
-	}
-
-	return f.Access(t).Addr().UnsafePointer()
-}
-
-func NewSchema[T any]() *Schema[T] {
-	t := reflect.TypeFor[T]()
-
-	return &Schema[T]{
-		typ:       t,
-		derefType: derefType(t),
-		store:     &sync.Map{},
-	}
-}
-
-type Schema[T any] struct {
-	typ       reflect.Type
-	derefType reflect.Type
-	store     *sync.Map
-}
-
-func (s *Schema[T]) makeField(path string) (Field[T], error) {
-	if path == "" || path == "." {
-		return Field[T]{
-			Indices:   nil,
-			Offset:    0,
-			Type:      s.typ,
-			DerefType: s.derefType,
-			DerefKind: s.derefType.Kind(),
-		}, nil
-	}
-
-	var (
-		t       = s.typ
-		indices []int
-		pointer bool
-		offset  uintptr
-		depth   int
-	)
-
-	for p := range strings.SplitSeq(path, ".") {
-		//nolint:mnd
-		if depth > 10 {
-			return Field[T]{}, fmt.Errorf("field %s: depth limit exceeded", path)
-		}
-
-		if t.Kind() == reflect.Pointer {
-			pointer = true
-			t = derefType(t)
-		}
-
-		sf, ok := t.FieldByName(p)
-		if !ok {
-			return Field[T]{}, fmt.Errorf("field %s: not found", path)
-		}
-
-		if !sf.IsExported() {
-			return Field[T]{}, fmt.Errorf("field %s: not exported", path)
-		}
-
-		t = sf.Type
-
-		indices = append(indices, sf.Index...)
-		offset += sf.Offset
-
-		depth++
-	}
-
-	if pointer {
-		offset = 0
-	}
-
-	d := derefType(t)
-
-	return Field[T]{
-		Indices:   indices,
-		Offset:    offset,
-		Type:      t,
-		DerefType: d,
-		DerefKind: d.Kind(),
-	}, nil
-}
-
-func (s *Schema[T]) Field(path string) (Field[T], error) {
-	field, ok := s.store.Load(path)
-	if ok {
-		//nolint:forcetypeassert
-		return field.(Field[T]), nil
-	}
-
-	f, err := s.makeField(path)
-	if err != nil {
-		return Field[T]{}, err
-	}
-
-	s.store.Store(path, f)
-
-	return f, nil
-}
-
-func (s *Schema[T]) Scan() SchemaScanner[T] {
-	return SchemaScanner[T]{
-		schema:   s,
-		nullable: false,
-	}
-}
-
-type SchemaScanner[T any] struct {
-	schema   *Schema[T]
+type DefaultScanner struct {
 	nullable bool
 }
 
-func (s SchemaScanner[T]) Nullable() SchemaScanner[T] {
+func Nullable() DefaultScanner {
+	return DefaultScanner{}.Nullable()
+}
+
+func (s DefaultScanner) Nullable() DefaultScanner {
 	s.nullable = true
 
 	return s
 }
 
-func (s SchemaScanner[T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
+func String() StringScanner[string] {
+	return DefaultScanner{}.String()
 }
 
-//nolint:gochecknoglobals
-var scannerType = reflect.TypeFor[sql.Scanner]()
-
-func (s SchemaScanner[T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	if reflect.PointerTo(f.DerefType).Implements(scannerType) {
-		return valueFieldScanner[any, T]{
-			field:    f,
-			nullable: s.nullable,
-			setter: func(t *T, src any) error {
-				//nolint:forcetypeassert
-				return f.AccessDeref(t).Addr().Interface().(sql.Scanner).Scan(src)
-			},
-		}, nil
-	}
-
-	return fieldScanner[T]{
-		field:    f,
+func (s DefaultScanner) String() StringScanner[string] {
+	return StringScanner[string]{
 		nullable: s.nullable,
-	}, nil
-}
-
-func (s SchemaScanner[T]) Scan() (any, func(t *T) error) {
-	return s.MustTo(".").Scan()
-}
-
-func (s SchemaScanner[T]) String() StringScanner[string, T] {
-	return StringScanner[string, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert:  justString,
+		convert:  func(src string) (string, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Int() IntScanner[int64, T] {
-	return IntScanner[int64, T]{
-		schema:   s.schema,
+func Int() IntScanner[int64] {
+	return DefaultScanner{}.Int()
+}
+
+func (s DefaultScanner) Int() IntScanner[int64] {
+	return IntScanner[int64]{
 		nullable: s.nullable,
-		convert:  justInt,
+		convert:  func(src int64) (int64, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Uint() UintScanner[uint64, T] {
-	return UintScanner[uint64, T]{
-		schema:   s.schema,
+func Uint() UintScanner[uint64] {
+	return DefaultScanner{}.Uint()
+}
+
+func (s DefaultScanner) Uint() UintScanner[uint64] {
+	return UintScanner[uint64]{
 		nullable: s.nullable,
-		convert:  justUint,
+		convert:  func(src uint64) (uint64, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Float() FloatScanner[float64, T] {
-	return FloatScanner[float64, T]{
-		schema:   s.schema,
+func Float() FloatScanner[float64] {
+	return DefaultScanner{}.Float()
+}
+
+func (s DefaultScanner) Float() FloatScanner[float64] {
+	return FloatScanner[float64]{
 		nullable: s.nullable,
-		convert:  justFloat,
+		convert:  func(src float64) (float64, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Bool() BoolScanner[bool, T] {
-	return BoolScanner[bool, T]{
-		schema:   s.schema,
+func Bool() BoolScanner[bool] {
+	return DefaultScanner{}.Bool()
+}
+
+func (s DefaultScanner) Bool() BoolScanner[bool] {
+	return BoolScanner[bool]{
 		nullable: s.nullable,
-		convert:  justBool,
+		convert:  func(src bool) (bool, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Time() TimeScanner[time.Time, T] {
-	return TimeScanner[time.Time, T]{
-		schema:   s.schema,
+func Time() TimeScanner[time.Time] {
+	return DefaultScanner{}.Time()
+}
+
+func (s DefaultScanner) Time() TimeScanner[time.Time] {
+	return TimeScanner[time.Time]{
 		nullable: s.nullable,
-		convert:  justTime,
+		convert:  func(src time.Time) (time.Time, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Duration() DurationScanner[time.Duration, T] {
-	return DurationScanner[time.Duration, T]{
-		schema:   s.schema,
+func Bytes() BytesScanner[[]byte] {
+	return DefaultScanner{}.Bytes()
+}
+
+func (s DefaultScanner) Bytes() BytesScanner[[]byte] {
+	return BytesScanner[[]byte]{
 		nullable: s.nullable,
-		convert:  justDuration,
+		convert:  func(src []byte) ([]byte, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Bytes() BytesScanner[sql.RawBytes, T] {
-	return BytesScanner[sql.RawBytes, T]{
-		schema:   s.schema,
+func StringSlice() StringSliceScanner[[]string] {
+	return DefaultScanner{}.StringSlice()
+}
+
+func (s DefaultScanner) StringSlice() StringSliceScanner[[]string] {
+	return StringSliceScanner[[]string]{
 		nullable: s.nullable,
-		convert:  justBytes,
+		convert:  func(src []string) ([]string, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) JSON() JSONScanner[sql.RawBytes, T] {
-	return JSONScanner[sql.RawBytes, T]{
-		schema:   s.schema,
+func IntSlice() IntSliceScanner[[]int64] {
+	return DefaultScanner{}.IntSlice()
+}
+
+func (s DefaultScanner) IntSlice() IntSliceScanner[[]int64] {
+	return IntSliceScanner[[]int64]{
 		nullable: s.nullable,
-		convert:  justBytes,
+		convert:  func(src []int64) ([]int64, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Text() TextScanner[sql.RawBytes, T] {
-	return TextScanner[sql.RawBytes, T]{
-		schema:   s.schema,
+func JSON() JSONScanner[sql.RawBytes] {
+	return DefaultScanner{}.JSON()
+}
+
+func (s DefaultScanner) JSON() JSONScanner[sql.RawBytes] {
+	return JSONScanner[sql.RawBytes]{
 		nullable: s.nullable,
-		convert:  justBytes,
+		convert:  func(src sql.RawBytes) (sql.RawBytes, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Binary() BinaryScanner[sql.RawBytes, T] {
-	return BinaryScanner[sql.RawBytes, T]{
-		schema:   s.schema,
+func Text() TextScanner[sql.RawBytes] {
+	return DefaultScanner{}.Text()
+}
+
+func (s DefaultScanner) Text() TextScanner[sql.RawBytes] {
+	return TextScanner[sql.RawBytes]{
 		nullable: s.nullable,
-		convert:  justBytes,
+		convert:  func(src sql.RawBytes) (sql.RawBytes, error) { return src, nil },
 	}
 }
 
-func (s SchemaScanner[T]) Assign(init func() Assigner) AssignScanner[T] {
-	return AssignScanner[T]{
-		schema:   s.schema,
+func Binary() BinaryScanner[sql.RawBytes] {
+	return DefaultScanner{}.Binary()
+}
+
+func (s DefaultScanner) Binary() BinaryScanner[sql.RawBytes] {
+	return BinaryScanner[sql.RawBytes]{
 		nullable: s.nullable,
-		init:     init,
+		convert:  func(src sql.RawBytes) (sql.RawBytes, error) { return src, nil },
 	}
 }
 
-type fieldScanner[T any] struct {
-	field    Field[T]
-	nullable bool
+func To(path string) Scanner {
+	return DefaultScanner{}.To(path)
 }
 
-func (s fieldScanner[T]) Scan() (any, func(t *T) error) {
-	if s.nullable {
-		var src = reflect.New(reflect.PointerTo(s.field.Type))
+func (s DefaultScanner) To(path string) Scanner {
+	return ScanFunc(func(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+		indices, dstType, err := accessor(typ, path)
+		if err != nil {
+			return nil, nil, err
+		}
 
-		return src.Interface(), func(t *T) error {
-			dst := s.field.Access(t)
+		if s.nullable {
+			src := reflect.New(reflect.PointerTo(dstType))
 
-			elem := src.Elem()
-			if elem.IsNil() {
-				dst.SetZero()
+			return src.Interface(), func(dst reflect.Value) error {
+				elem := src.Elem()
+
+				if elem.IsNil() {
+					return nil
+				}
+
+				access(dst, indices).Set(elem.Elem())
 
 				return nil
-			}
-
-			dst.Set(elem.Elem())
-
-			return nil
+			}, nil
 		}
-	}
 
-	var src = reflect.New(s.field.Type)
+		src := reflect.New(dstType)
 
-	return src.Interface(), func(t *T) error {
-		s.field.Access(t).Set(src.Elem())
-
-		return nil
-	}
-}
-
-type StringScanner[S, T any] struct {
-	schema   *Schema[T]
-	nullable bool
-	convert  Convert[S, string]
-}
-
-func (s StringScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s StringScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var (
-	stringType        = reflect.TypeFor[string]()
-	stringPointerType = reflect.TypeFor[*string]()
-)
-
-//nolint:dupl
-func (s StringScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	set, err := makeSetter(f,
-		stringType,
-		stringPointerType,
-		[]reflect.Kind{reflect.String},
-		func(dst reflect.Value, src string) error {
-			dst.SetString(src)
+		return src.Interface(), func(dst reflect.Value) error {
+			access(dst, indices).Set(src.Elem())
 
 			return nil
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justStringPointer {
-		return valueFieldScanner[string, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src string) error {
-				return set(t, src)
-			},
 		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			return set(t, val)
-		},
-	}, nil
-}
-
-func (s StringScanner[S, T]) Convert(conv Convert[string, string]) StringScanner[S, T] {
-	return StringScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (string, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return "", err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s StringScanner[S, T]) Trim(cutset string) StringScanner[S, T] {
-	return s.Convert(func(src string) (string, error) {
-		return strings.Trim(src, cutset), nil
 	})
 }
 
-func (s StringScanner[S, T]) TrimSpace() StringScanner[S, T] {
-	return s.Convert(func(src string) (string, error) {
-		return strings.TrimSpace(src), nil
-	})
+func (s DefaultScanner) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
 }
 
-func (s StringScanner[S, T]) Replace(find, replace string, n int) StringScanner[S, T] {
-	return s.Convert(func(src string) (string, error) {
-		return strings.Replace(src, find, replace, n), nil
-	})
+type StringScanner[S any] struct {
+	nullable bool
+	convert  func(src S) (string, error)
 }
 
-func (s StringScanner[S, T]) ReplaceAll(find, replace string) StringScanner[S, T] {
-	return s.Convert(func(src string) (string, error) {
-		return strings.ReplaceAll(src, find, replace), nil
-	})
-}
-
-func (s StringScanner[S, T]) ConvertInt(conv Convert[string, int64]) IntScanner[S, T] {
-	return IntScanner[S, T]{
-		schema:   s.schema,
+func (s StringScanner[S]) ParseInt(base int, bitSize int) IntScanner[S] {
+	return IntScanner[S]{
 		nullable: s.nullable,
 		convert: func(src S) (int64, error) {
 			val, err := s.convert(src)
@@ -691,20 +488,13 @@ func (s StringScanner[S, T]) ConvertInt(conv Convert[string, int64]) IntScanner[
 				return 0, err
 			}
 
-			return conv(val)
+			return strconv.ParseInt(val, base, bitSize)
 		},
 	}
 }
 
-func (s StringScanner[S, T]) Int(base int, bitSize int) IntScanner[S, T] {
-	return s.ConvertInt(func(src string) (int64, error) {
-		return strconv.ParseInt(src, base, bitSize)
-	})
-}
-
-func (s StringScanner[S, T]) ConvertUint(conv Convert[string, uint64]) UintScanner[S, T] {
-	return UintScanner[S, T]{
-		schema:   s.schema,
+func (s StringScanner[S]) ParseUint(base int, bitSize int) UintScanner[S] {
+	return UintScanner[S]{
 		nullable: s.nullable,
 		convert: func(src S) (uint64, error) {
 			val, err := s.convert(src)
@@ -712,20 +502,13 @@ func (s StringScanner[S, T]) ConvertUint(conv Convert[string, uint64]) UintScann
 				return 0, err
 			}
 
-			return conv(val)
+			return strconv.ParseUint(val, base, bitSize)
 		},
 	}
 }
 
-func (s StringScanner[S, T]) Uint(base int, bitSize int) UintScanner[S, T] {
-	return s.ConvertUint(func(src string) (uint64, error) {
-		return strconv.ParseUint(src, base, bitSize)
-	})
-}
-
-func (s StringScanner[S, T]) ConvertFloat(conv Convert[string, float64]) FloatScanner[S, T] {
-	return FloatScanner[S, T]{
-		schema:   s.schema,
+func (s StringScanner[S]) ParseFloat(bitSize int) FloatScanner[S] {
+	return FloatScanner[S]{
 		nullable: s.nullable,
 		convert: func(src S) (float64, error) {
 			val, err := s.convert(src)
@@ -733,41 +516,13 @@ func (s StringScanner[S, T]) ConvertFloat(conv Convert[string, float64]) FloatSc
 				return 0, err
 			}
 
-			return conv(val)
+			return strconv.ParseFloat(val, bitSize)
 		},
 	}
 }
 
-func (s StringScanner[S, T]) Float(bitSize int) FloatScanner[S, T] {
-	return s.ConvertFloat(func(src string) (float64, error) {
-		return strconv.ParseFloat(src, bitSize)
-	})
-}
-
-func (s StringScanner[S, T]) ConvertComplex(conv Convert[string, complex128]) ComplexScanner[S, T] {
-	return ComplexScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (complex128, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s StringScanner[S, T]) Complex(bitSize int) ComplexScanner[S, T] {
-	return s.ConvertComplex(func(src string) (complex128, error) {
-		return strconv.ParseComplex(src, bitSize)
-	})
-}
-
-func (s StringScanner[S, T]) ConvertBool(conv Convert[string, bool]) BoolScanner[S, T] {
-	return BoolScanner[S, T]{
-		schema:   s.schema,
+func (s StringScanner[S]) ParseBool() BoolScanner[S] {
+	return BoolScanner[S]{
 		nullable: s.nullable,
 		convert: func(src S) (bool, error) {
 			val, err := s.convert(src)
@@ -775,18 +530,13 @@ func (s StringScanner[S, T]) ConvertBool(conv Convert[string, bool]) BoolScanner
 				return false, err
 			}
 
-			return conv(val)
+			return strconv.ParseBool(val)
 		},
 	}
 }
 
-func (s StringScanner[S, T]) Bool() BoolScanner[S, T] {
-	return s.ConvertBool(strconv.ParseBool)
-}
-
-func (s StringScanner[S, T]) ConvertTime(conv Convert[string, time.Time]) TimeScanner[S, T] {
-	return TimeScanner[S, T]{
-		schema:   s.schema,
+func (s StringScanner[S]) ParseTime(layout string) TimeScanner[S] {
+	return TimeScanner[S]{
 		nullable: s.nullable,
 		convert: func(src S) (time.Time, error) {
 			val, err := s.convert(src)
@@ -794,40 +544,79 @@ func (s StringScanner[S, T]) ConvertTime(conv Convert[string, time.Time]) TimeSc
 				return time.Time{}, err
 			}
 
-			return conv(val)
+			return time.Parse(layout, val)
 		},
 	}
 }
 
-func (s StringScanner[S, T]) Time(layout string) TimeScanner[S, T] {
-	return s.ConvertTime(func(src string) (time.Time, error) {
-		return time.Parse(layout, src)
-	})
-}
-
-func (s StringScanner[S, T]) TimeInLocation(layout string, loc *time.Location) TimeScanner[S, T] {
-	return s.ConvertTime(func(src string) (time.Time, error) {
-		return time.ParseInLocation(layout, src, loc)
-	})
-}
-
-func (s StringScanner[S, T]) ConvertDuration(conv Convert[string, time.Duration]) DurationScanner[S, T] {
-	return DurationScanner[S, T]{
-		schema:   s.schema,
+func (s StringScanner[S]) ParseTimeInLocation(layout string, loc *time.Location) TimeScanner[S] {
+	return TimeScanner[S]{
 		nullable: s.nullable,
-		convert: func(src S) (time.Duration, error) {
+		convert: func(src S) (time.Time, error) {
 			val, err := s.convert(src)
 			if err != nil {
-				return 0, err
+				return time.Time{}, err
 			}
 
-			return conv(val)
+			return time.ParseInLocation(layout, val, loc)
 		},
 	}
 }
 
-func (s StringScanner[S, T]) Duration() DurationScanner[S, T] {
-	return s.ConvertDuration(time.ParseDuration)
+func (s StringScanner[S]) Trim(cutset string) StringScanner[S] {
+	return StringScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) (string, error) {
+			val, err := s.convert(src)
+			if err != nil {
+				return "", err
+			}
+
+			return strings.Trim(val, cutset), nil
+		},
+	}
+}
+
+func (s StringScanner[S]) TrimSpace() StringScanner[S] {
+	return StringScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) (string, error) {
+			val, err := s.convert(src)
+			if err != nil {
+				return "", err
+			}
+
+			return strings.TrimSpace(val), nil
+		},
+	}
+}
+
+func (s StringScanner[S]) TrimPrefix(prefix string) StringScanner[S] {
+	return StringScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) (string, error) {
+			val, err := s.convert(src)
+			if err != nil {
+				return "", err
+			}
+
+			return strings.TrimPrefix(val, prefix), nil
+		},
+	}
+}
+
+func (s StringScanner[S]) TrimSuffix(suffix string) StringScanner[S] {
+	return StringScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) (string, error) {
+			val, err := s.convert(src)
+			if err != nil {
+				return "", err
+			}
+
+			return strings.TrimSuffix(val, suffix), nil
+		},
+	}
 }
 
 type Enum struct {
@@ -835,21 +624,28 @@ type Enum struct {
 	Int    int64
 }
 
-func (s StringScanner[S, T]) Enum(enums ...Enum) IntScanner[S, T] {
-	return s.ConvertInt(func(src string) (int64, error) {
-		for _, each := range enums {
-			if each.String == src {
-				return each.Int, nil
+func (s StringScanner[S]) Enum(enums ...Enum) IntScanner[S] {
+	return IntScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) (int64, error) {
+			conv, err := s.convert(src)
+			if err != nil {
+				return 0, err
 			}
-		}
 
-		return 0, fmt.Errorf("value %s is not one of enums: %v", src, enums)
-	})
+			for _, each := range enums {
+				if each.String == conv {
+					return each.Int, nil
+				}
+			}
+
+			return 0, fmt.Errorf("value %s is not one of enums: %v", conv, enums)
+		},
+	}
 }
 
-func (s StringScanner[S, T]) ConvertStringSlice(conv Convert[string, []string]) StringSliceScanner[S, T] {
-	return StringSliceScanner[S, T]{
-		schema:   s.schema,
+func (s StringScanner[S]) Split(sep string) StringSliceScanner[S] {
+	return StringSliceScanner[S]{
 		nullable: s.nullable,
 		convert: func(src S) ([]string, error) {
 			val, err := s.convert(src)
@@ -857,1558 +653,764 @@ func (s StringScanner[S, T]) ConvertStringSlice(conv Convert[string, []string]) 
 				return nil, err
 			}
 
-			return conv(val)
+			if val == "" {
+				return []string{}, nil
+			}
+
+			return strings.Split(val, sep), nil
 		},
 	}
 }
 
-func (s StringScanner[S, T]) Split(sep string) StringSliceScanner[S, T] {
-	return s.ConvertStringSlice(func(src string) ([]string, error) {
-		if src == "" {
-			return nil, nil
-		}
-
-		return strings.Split(src, sep), nil
-	})
+func (s StringScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
 }
 
-type IntScanner[S, T any] struct {
-	schema   *Schema[T]
+func (s StringScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
+
+var stringType = reflect.TypeFor[string]()
+
+func (s StringScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv string) error, error) {
+	if dstType == stringType {
+		return func(dst reflect.Value, conv string) error {
+			*dst.Addr().Interface().(*string) = conv
+
+			return nil
+		}, nil
+	}
+
+	if dstType.Kind() == reflect.String {
+		return func(dst reflect.Value, conv string) error {
+			dst.SetString(conv)
+
+			return nil
+		}, nil
+	}
+
+	return nil, fmt.Errorf("%s is not assignable to string value", dstType)
+}
+
+type IntScanner[S any] struct {
 	nullable bool
 	convert  func(src S) (int64, error)
 }
 
-func (s IntScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s IntScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var (
-	int64Type        = reflect.TypeFor[int64]()
-	int64PointerType = reflect.TypeFor[*int64]()
-)
-
-func (s IntScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	set, err := makeSetter(f,
-		int64Type,
-		int64PointerType,
-		[]reflect.Kind{
-			reflect.Int64,
-			reflect.Int32,
-			reflect.Int16,
-			reflect.Int8,
-			reflect.Int,
-		},
-		func(dst reflect.Value, src int64) error {
-			if dst.OverflowInt(src) {
-				return fmt.Errorf("lossy conversion of int64 value %d to %s", src, dst.Type())
-			}
-
-			dst.SetInt(src)
-
-			return nil
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justIntPointer {
-		return valueFieldScanner[int64, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src int64) error {
-				return set(t, src)
-			},
-		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			return set(t, val)
-		},
-	}, nil
-}
-
-func (s IntScanner[S, T]) Convert(conv Convert[int64, int64]) IntScanner[S, T] {
-	return IntScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (int64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s IntScanner[S, T]) Multiply(factor int64) IntScanner[S, T] {
-	return s.Convert(func(src int64) (int64, error) {
-		return src * factor, nil
-	})
-}
-
-func (s IntScanner[S, T]) Add(summand int64) IntScanner[S, T] {
-	return s.Convert(func(src int64) (int64, error) {
-		return src + summand, nil
-	})
-}
-
-func (s IntScanner[S, T]) Subtract(subtrahend int64) IntScanner[S, T] {
-	return s.Convert(func(src int64) (int64, error) {
-		return src - subtrahend, nil
-	})
-}
-
-func (s IntScanner[S, T]) ConvertString(conv Convert[int64, string]) StringScanner[S, T] {
-	return StringScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
+func (s IntScanner[S]) Format(base int) StringScanner[S] {
+	return StringScanner[S]{
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
 				return "", err
 			}
 
-			return conv(val)
+			return strconv.FormatInt(val, base), nil
 		},
 	}
 }
 
-func (s IntScanner[S, T]) Format(base int) StringScanner[S, T] {
-	return s.ConvertString(func(src int64) (string, error) {
-		return strconv.FormatInt(src, base), nil
-	})
-}
-
-func (s IntScanner[S, T]) Enum(enums ...Enum) StringScanner[S, T] {
-	return s.ConvertString(func(src int64) (string, error) {
-		for _, each := range enums {
-			if each.Int == src {
-				return each.String, nil
-			}
-		}
-
-		return "", fmt.Errorf("value %d is not one of enums: %v", src, enums)
-	})
-}
-
-func (s IntScanner[S, T]) ConvertUint(conv Convert[int64, uint64]) UintScanner[S, T] {
-	return UintScanner[S, T]{
-		schema:   s.schema,
+func (s IntScanner[S]) Enum(enums ...Enum) StringScanner[S] {
+	return StringScanner[S]{
 		nullable: s.nullable,
-		convert: func(src S) (uint64, error) {
-			val, err := s.convert(src)
+		convert: func(src S) (string, error) {
+			conv, err := s.convert(src)
 			if err != nil {
-				return 0, err
+				return "", err
 			}
 
-			return conv(val)
+			for _, each := range enums {
+				if each.Int == conv {
+					return each.String, nil
+				}
+			}
+
+			return "", fmt.Errorf("value %d is not one of enums: %v", conv, enums)
 		},
 	}
 }
 
-func (s IntScanner[S, T]) Uint() UintScanner[S, T] {
-	return s.ConvertUint(func(src int64) (uint64, error) {
-		if src < 0 {
-			return 0, fmt.Errorf("lossy conversion of int64 value %d to uint64", src)
-		}
-
-		return uint64(src), nil
-	})
+func (s IntScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
 }
 
-func (s IntScanner[S, T]) ConvertFloat(conv Convert[int64, float64]) FloatScanner[S, T] {
-	return FloatScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (float64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
+func (s IntScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
+
+var intType = reflect.TypeFor[int64]()
+
+func (s IntScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv int64) error, error) {
+	if dstType == intType {
+		return func(dst reflect.Value, conv int64) error {
+			*dst.Addr().Interface().(*int64) = conv
+
+			return nil
+		}, nil
+	}
+
+	switch dstType.Kind() {
+	case reflect.Int64, reflect.Int32, reflect.Int16, reflect.Int8, reflect.Int:
+		return func(dst reflect.Value, conv int64) error {
+			if dst.OverflowInt(conv) {
+				return fmt.Errorf("overflow of int64 value %d to %s", conv, dstType)
 			}
 
-			return conv(val)
-		},
-	}
-}
+			dst.SetInt(conv)
 
-func (s IntScanner[S, T]) Float() FloatScanner[S, T] {
-	return s.ConvertFloat(func(src int64) (float64, error) {
-		return float64(src), nil
-	})
-}
-
-func (s IntScanner[S, T]) Divide(divisor float64) FloatScanner[S, T] {
-	return s.ConvertFloat(func(src int64) (float64, error) {
-		return float64(src) / divisor, nil
-	})
-}
-
-func (s IntScanner[S, T]) ConvertTime(conv Convert[int64, time.Time]) TimeScanner[S, T] {
-	return TimeScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (time.Time, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return time.Time{}, err
+			return nil
+		}, nil
+	case reflect.Uint64, reflect.Uint32, reflect.Uint16, reflect.Uint8, reflect.Uint:
+		return func(dst reflect.Value, conv int64) error {
+			if conv < 0 {
+				return fmt.Errorf("lossy conversion of int64 value %d to %s", conv, dstType)
 			}
 
-			return conv(val)
-		},
+			v := uint64(conv)
+
+			if dst.OverflowUint(v) {
+				return fmt.Errorf("overflow of int64 value %d to %s", conv, dstType)
+			}
+
+			dst.SetUint(v)
+
+			return nil
+		}, nil
+	case reflect.Float64, reflect.Float32:
+		return func(dst reflect.Value, conv int64) error {
+			v := float64(conv)
+
+			if dst.OverflowFloat(v) {
+				return fmt.Errorf("overflow of int64 value %d to %s", conv, dstType)
+			}
+
+			dst.SetFloat(v)
+
+			return nil
+		}, nil
 	}
+
+	return nil, fmt.Errorf("%s is not assignable to int64 value", dstType)
 }
 
-func (s IntScanner[S, T]) Unix() TimeScanner[S, T] {
-	return s.ConvertTime(func(src int64) (time.Time, error) {
-		return time.Unix(src, 0), nil
-	})
-}
-
-func (s IntScanner[S, T]) UnixMilli() TimeScanner[S, T] {
-	return s.ConvertTime(func(src int64) (time.Time, error) {
-		return time.UnixMilli(src), nil
-	})
-}
-
-func (s IntScanner[S, T]) UnixMicro() TimeScanner[S, T] {
-	return s.ConvertTime(func(src int64) (time.Time, error) {
-		return time.UnixMicro(src), nil
-	})
-}
-
-func (s IntScanner[S, T]) UnixNano() TimeScanner[S, T] {
-	return s.ConvertTime(func(src int64) (time.Time, error) {
-		return time.Unix(0, src), nil
-	})
-}
-
-type UintScanner[S, T any] struct {
-	schema   *Schema[T]
+type UintScanner[S any] struct {
 	nullable bool
 	convert  func(src S) (uint64, error)
 }
 
-func (s UintScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s UintScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var (
-	uint64Type        = reflect.TypeFor[uint64]()
-	uint64PointerType = reflect.TypeFor[*uint64]()
-)
-
-func (s UintScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	set, err := makeSetter(f,
-		uint64Type,
-		uint64PointerType,
-		[]reflect.Kind{
-			reflect.Uint64,
-			reflect.Uint32,
-			reflect.Uint16,
-			reflect.Uint8,
-			reflect.Uint,
-		},
-		func(dst reflect.Value, src uint64) error {
-			if dst.OverflowUint(src) {
-				return fmt.Errorf("lossy conversion of uint64 value %d to %s", src, dst.Type())
-			}
-
-			dst.SetUint(src)
-
-			return nil
-		})
-	if err != nil {
-		return nil, fmt.Errorf("field %s: %w", path, err)
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justUintPointer {
-		return valueFieldScanner[uint64, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src uint64) error {
-				return set(t, src)
-			},
-		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			return set(t, val)
-		},
-	}, nil
-}
-
-func (s UintScanner[S, T]) ConvertUint(conv Convert[uint64, uint64]) UintScanner[S, T] {
-	return UintScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (uint64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s UintScanner[S, T]) ConvertString(conv Convert[uint64, string]) StringScanner[S, T] {
-	return StringScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
+func (s UintScanner[S]) Format(base int) StringScanner[S] {
+	return StringScanner[S]{
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
 				return "", err
 			}
 
-			return conv(val)
+			return strconv.FormatUint(val, base), nil
 		},
 	}
 }
 
-func (s UintScanner[S, T]) Format(base int) StringScanner[S, T] {
-	return s.ConvertString(func(src uint64) (string, error) {
-		return strconv.FormatUint(src, base), nil
-	})
+func (s UintScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
 }
 
-func (s UintScanner[S, T]) ConvertInt(conv Convert[uint64, int64]) IntScanner[S, T] {
-	return IntScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (int64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
+func (s UintScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
+
+var uint64Type = reflect.TypeFor[int64]()
+
+func (s UintScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv uint64) error, error) {
+	if dstType == uint64Type {
+		return func(dst reflect.Value, conv uint64) error {
+			*dst.Addr().Interface().(*uint64) = conv
+
+			return nil
+		}, nil
+	}
+
+	switch dstType.Kind() {
+	case reflect.Uint64, reflect.Uint32, reflect.Uint16, reflect.Uint8, reflect.Uint:
+		return func(dst reflect.Value, conv uint64) error {
+			if dst.OverflowUint(conv) {
+				return fmt.Errorf("overflow of uint64 value %d to %s", conv, dstType)
 			}
 
-			return conv(val)
-		},
-	}
-}
+			dst.SetUint(conv)
 
-func (s UintScanner[S, T]) Int() IntScanner[S, T] {
-	return s.ConvertInt(func(src uint64) (int64, error) {
-		if src > uint64(math.MaxInt64) {
-			return 0, fmt.Errorf("lossy conversion of uint64 value %d to int64", src)
-		}
-
-		return int64(src), nil
-	})
-}
-
-func (s UintScanner[S, T]) ConvertFloat(conv Convert[uint64, float64]) FloatScanner[S, T] {
-	return FloatScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (float64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
+			return nil
+		}, nil
+	case reflect.Int64, reflect.Int32, reflect.Int16, reflect.Int8, reflect.Int:
+		return func(dst reflect.Value, conv uint64) error {
+			if conv > math.MaxInt64 {
+				return fmt.Errorf("lossy conversion of uint64 value %d to %s", conv, dstType)
 			}
 
-			return conv(val)
-		},
+			v := int64(conv)
+
+			if dst.OverflowInt(v) {
+				return fmt.Errorf("overflow of uint64 value %d to %s", conv, dstType)
+			}
+
+			dst.SetInt(v)
+
+			return nil
+		}, nil
+	case reflect.Float64, reflect.Float32:
+		return func(dst reflect.Value, conv uint64) error {
+			v := float64(conv)
+
+			if dst.OverflowFloat(v) {
+				return fmt.Errorf("overflow of int64 value %d to %s", conv, dstType)
+			}
+
+			dst.SetFloat(v)
+
+			return nil
+		}, nil
 	}
+
+	return nil, fmt.Errorf("%s is not assignable to int64 value", dstType)
 }
 
-func (s UintScanner[S, T]) Float() FloatScanner[S, T] {
-	return s.ConvertFloat(func(src uint64) (float64, error) {
-		return float64(src), nil
-	})
-}
-
-type FloatScanner[S, T any] struct {
-	schema   *Schema[T]
+type FloatScanner[S any] struct {
 	nullable bool
 	convert  func(src S) (float64, error)
 }
 
-func (s FloatScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s FloatScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var (
-	float64Type        = reflect.TypeFor[float64]()
-	float64PointerType = reflect.TypeFor[*float64]()
-)
-
-func (s FloatScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	set, err := makeSetter(f,
-		float64Type,
-		float64PointerType,
-		[]reflect.Kind{
-			reflect.Float64,
-			reflect.Float32,
-		},
-		func(dst reflect.Value, src float64) error {
-			if dst.OverflowFloat(src) {
-				return fmt.Errorf("lossy conversion of float64 value %f to %s", src, dst.Type())
-			}
-
-			dst.SetFloat(src)
-
-			return nil
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justFloatPointer {
-		return valueFieldScanner[float64, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src float64) error {
-				return set(t, src)
-			},
-		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			return set(t, val)
-		},
-	}, nil
-}
-
-func (s FloatScanner[S, T]) ConvertFloat(conv Convert[float64, float64]) FloatScanner[S, T] {
-	return FloatScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (float64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s FloatScanner[S, T]) ConvertString(conv Convert[float64, string]) StringScanner[S, T] {
-	return StringScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
+func (s FloatScanner[S]) Format(fmt byte, prec int, bitSize int) StringScanner[S] {
+	return StringScanner[S]{
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
 				return "", err
 			}
 
-			return conv(val)
+			return strconv.FormatFloat(val, fmt, prec, bitSize), nil
 		},
 	}
 }
 
-func (s FloatScanner[S, T]) Format(fmt byte, prec int, bitSize int) StringScanner[S, T] {
-	return s.ConvertString(func(src float64) (string, error) {
-		return strconv.FormatFloat(src, fmt, prec, bitSize), nil
-	})
+func (s FloatScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
 }
 
-func (s FloatScanner[S, T]) ConvertInt(conv Convert[float64, int64]) IntScanner[S, T] {
-	return IntScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (int64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
+func (s FloatScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
 }
 
-func (s FloatScanner[S, T]) Int() IntScanner[S, T] {
-	maximum := float64(math.MaxInt64)
-	minimum := float64(math.MinInt64)
+var float64Type = reflect.TypeFor[float64]()
 
-	return s.ConvertInt(func(src float64) (int64, error) {
-		if src < minimum || src > maximum || math.Trunc(src) != src {
-			return 0, fmt.Errorf("lossy conversion of float64 value %f to int64", src)
-		}
-
-		return int64(src), nil
-	})
-}
-
-func (s FloatScanner[S, T]) ConvertUint(conv Convert[float64, uint64]) UintScanner[S, T] {
-	return UintScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (uint64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s FloatScanner[S, T]) Uint() UintScanner[S, T] {
-	maximum := float64(math.MaxInt64)
-
-	return s.ConvertUint(func(src float64) (uint64, error) {
-		if src < 0 || src > maximum || math.Trunc(src) != src {
-			return 0, fmt.Errorf("lossy conversion of float64 value %f to uint64", src)
-		}
-
-		return uint64(src), nil
-	})
-}
-
-func (s FloatScanner[S, T]) Round() FloatScanner[S, T] {
-	return s.ConvertFloat(func(src float64) (float64, error) {
-		return math.Round(src), nil
-	})
-}
-
-func (s FloatScanner[S, T]) Multiply(factor float64) FloatScanner[S, T] {
-	return s.ConvertFloat(func(src float64) (float64, error) {
-		return src * factor, nil
-	})
-}
-
-func (s FloatScanner[S, T]) Divide(divisor float64) FloatScanner[S, T] {
-	return s.ConvertFloat(func(src float64) (float64, error) {
-		return src / divisor, nil
-	})
-}
-
-func (s FloatScanner[S, T]) Add(summand float64) FloatScanner[S, T] {
-	return s.ConvertFloat(func(src float64) (float64, error) {
-		return src + summand, nil
-	})
-}
-
-func (s FloatScanner[S, T]) Subtract(subtrahend float64) FloatScanner[S, T] {
-	return s.ConvertFloat(func(src float64) (float64, error) {
-		return src - subtrahend, nil
-	})
-}
-
-type ComplexScanner[S, T any] struct {
-	schema   *Schema[T]
-	nullable bool
-	convert  func(src S) (complex128, error)
-}
-
-func (s ComplexScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s ComplexScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var (
-	complex128Type        = reflect.TypeFor[complex128]()
-	complex128PointerType = reflect.TypeFor[*complex128]()
-)
-
-func (s ComplexScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	set, err := makeSetter(f,
-		complex128Type,
-		complex128PointerType,
-		[]reflect.Kind{
-			reflect.Complex128,
-			reflect.Complex64,
-		},
-		func(dst reflect.Value, src complex128) error {
-			if dst.OverflowComplex(src) {
-				return fmt.Errorf("lossy conversion of complex128 value %f to %s", src, dst.Type())
-			}
-
-			dst.SetComplex(src)
+func (s FloatScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv float64) error, error) {
+	if dstType == float64Type {
+		return func(dst reflect.Value, conv float64) error {
+			*dst.Addr().Interface().(*float64) = conv
 
 			return nil
-		})
-	if err != nil {
-		return nil, err
+		}, nil
 	}
 
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
+	switch dstType.Kind() {
+	case reflect.Float64, reflect.Float32:
+		return func(dst reflect.Value, conv float64) error {
+			dst.SetFloat(conv)
 
-			return set(t, val)
-		},
-	}, nil
+			return nil
+		}, nil
+	}
+
+	return nil, fmt.Errorf("%s is not assignable to float64 value", dstType)
 }
 
-type BoolScanner[S, T any] struct {
-	schema   *Schema[T]
+type BoolScanner[S any] struct {
 	nullable bool
 	convert  func(src S) (bool, error)
 }
 
-func (s BoolScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s BoolScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var (
-	boolType        = reflect.TypeFor[bool]()
-	boolPointerType = reflect.TypeFor[*bool]()
-)
-
-//nolint:dupl
-func (s BoolScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	set, err := makeSetter(f,
-		boolType,
-		boolPointerType,
-		[]reflect.Kind{
-			reflect.Bool,
-		},
-		func(dst reflect.Value, src bool) error {
-			dst.SetBool(src)
-
-			return nil
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justBoolPointer {
-		return valueFieldScanner[bool, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src bool) error {
-				return set(t, src)
-			},
-		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			return set(t, val)
-		},
-	}, nil
-}
-
-func (s BoolScanner[S, T]) ConvertString(conv func(src bool) (string, error)) StringScanner[S, T] {
-	return StringScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
+func (s BoolScanner[S]) Format() StringScanner[S] {
+	return StringScanner[S]{
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
 				return "", err
 			}
 
-			return conv(val)
+			return strconv.FormatBool(val), nil
 		},
 	}
 }
 
-func (s BoolScanner[S, T]) Format() StringScanner[S, T] {
-	return s.ConvertString(func(src bool) (string, error) {
-		return strconv.FormatBool(src), nil
-	})
+func (s BoolScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
 }
 
-func (s BoolScanner[S, T]) ConvertInt(conv func(src bool) (int64, error)) IntScanner[S, T] {
-	return IntScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (int64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
+func (s BoolScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
 
-			return conv(val)
-		},
+var boolType = reflect.TypeFor[bool]()
+
+func (s BoolScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv bool) error, error) {
+	if dstType == boolType {
+		return func(dst reflect.Value, conv bool) error {
+			*dst.Addr().Interface().(*bool) = conv
+
+			return nil
+		}, nil
 	}
-}
 
-func (s BoolScanner[S, T]) Int() IntScanner[S, T] {
-	return s.ConvertInt(func(src bool) (int64, error) {
-		if src {
-			return 1, nil
-		}
+	if dstType.Kind() == reflect.Bool {
+		return func(dst reflect.Value, conv bool) error {
+			dst.SetBool(conv)
 
-		return 0, nil
-	})
-}
-
-func (s BoolScanner[S, T]) ConvertUint(conv func(src bool) (uint64, error)) UintScanner[S, T] {
-	return UintScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (uint64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
+			return nil
+		}, nil
 	}
+
+	return nil, fmt.Errorf("%s is not assignable to bool value", dstType)
 }
 
-func (s BoolScanner[S, T]) Uint() UintScanner[S, T] {
-	return s.ConvertUint(func(src bool) (uint64, error) {
-		if src {
-			return 1, nil
-		}
-
-		return 0, nil
-	})
-}
-
-func (s BoolScanner[S, T]) ConvertFloat(conv func(src bool) (float64, error)) FloatScanner[S, T] {
-	return FloatScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (float64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s BoolScanner[S, T]) Float() FloatScanner[S, T] {
-	return s.ConvertFloat(func(src bool) (float64, error) {
-		if src {
-			return 1, nil
-		}
-
-		return 0, nil
-	})
-}
-
-type TimeScanner[S, T any] struct {
-	schema   *Schema[T]
+type TimeScanner[S any] struct {
 	nullable bool
 	convert  func(src S) (time.Time, error)
 }
 
-func (s TimeScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s TimeScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var (
-	timeType        = reflect.TypeFor[time.Time]()
-	timePointerType = reflect.TypeFor[*time.Time]()
-)
-
-//nolint:dupl
-func (s TimeScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	set, err := makeSetter[time.Time](f, timeType, timePointerType, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justTimePointer {
-		return valueFieldScanner[time.Time, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src time.Time) error {
-				return set(t, src)
-			},
-		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			return set(t, val)
-		},
-	}, nil
-}
-
-func (s TimeScanner[S, T]) ConvertString(conv func(src time.Time) (string, error)) StringScanner[S, T] {
-	return StringScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
+func (s TimeScanner[S]) Format(layout string) StringScanner[S] {
+	return StringScanner[S]{
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
 				return "", err
 			}
 
-			return conv(val)
+			return val.Format(layout), nil
 		},
 	}
 }
 
-func (s TimeScanner[S, T]) Format(layout string) StringScanner[S, T] {
-	return s.ConvertString(func(src time.Time) (string, error) {
-		return src.Format(layout), nil
-	})
+func (s TimeScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
 }
 
-func (s TimeScanner[S, T]) String() StringScanner[S, T] {
-	return s.ConvertString(func(src time.Time) (string, error) {
-		return src.String(), nil
-	})
+func (s TimeScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
 }
 
-type DurationScanner[S, T any] struct {
-	schema   *Schema[T]
-	nullable bool
-	convert  func(src S) (time.Duration, error)
-}
+var timeType = reflect.TypeFor[time.Time]()
 
-func (s DurationScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
+func (s TimeScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv time.Time) error, error) {
+	if dstType == timeType {
+		return func(dst reflect.Value, conv time.Time) error {
+			*dst.Addr().Interface().(*time.Time) = conv
 
-func (s DurationScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var (
-	durationType        = reflect.TypeFor[time.Duration]()
-	durationPointerType = reflect.TypeFor[*time.Duration]()
-)
-
-//nolint:dupl
-func (s DurationScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	set, err := makeSetter[time.Duration](f, durationType, durationPointerType, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justDurationPointer {
-		return valueFieldScanner[time.Duration, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src time.Duration) error {
-				return set(t, src)
-			},
+			return nil
 		}, nil
 	}
 
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
+	if timeType.ConvertibleTo(dstType) {
+		return func(dst reflect.Value, conv time.Time) error {
+			dst.Set(reflect.ValueOf(conv).Convert(dstType))
 
-			return set(t, val)
-		},
-	}, nil
-}
-
-func (s DurationScanner[S, T]) ConvertDuration(conv func(time.Duration) (time.Duration, error)) DurationScanner[S, T] {
-	return DurationScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (time.Duration, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
+			return nil
+		}, nil
 	}
+
+	return nil, fmt.Errorf("%s is not assignable to time.Time value", dstType)
 }
 
-func (s DurationScanner[S, T]) Round(m time.Duration) DurationScanner[S, T] {
-	return s.ConvertDuration(func(d time.Duration) (time.Duration, error) {
-		return d.Round(m), nil
-	})
-}
-
-func (s DurationScanner[S, T]) Truncate(m time.Duration) DurationScanner[S, T] {
-	return s.ConvertDuration(func(d time.Duration) (time.Duration, error) {
-		return d.Truncate(m), nil
-	})
-}
-
-func (s DurationScanner[S, T]) ConvertString(conv func(time.Duration) (string, error)) StringScanner[S, T] {
-	return StringScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (string, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return "", err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s DurationScanner[S, T]) String() StringScanner[S, T] {
-	return s.ConvertString(func(d time.Duration) (string, error) {
-		return d.String(), nil
-	})
-}
-
-func (s DurationScanner[S, T]) ConvertInt(conv func(time.Duration) (int64, error)) IntScanner[S, T] {
-	return IntScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (int64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s DurationScanner[S, T]) Milliseconds() IntScanner[S, T] {
-	return s.ConvertInt(func(d time.Duration) (int64, error) {
-		return d.Milliseconds(), nil
-	})
-}
-
-func (s DurationScanner[S, T]) Microseconds() IntScanner[S, T] {
-	return s.ConvertInt(func(d time.Duration) (int64, error) {
-		return d.Microseconds(), nil
-	})
-}
-
-func (s DurationScanner[S, T]) Nanoseconds() IntScanner[S, T] {
-	return s.ConvertInt(func(d time.Duration) (int64, error) {
-		return d.Nanoseconds(), nil
-	})
-}
-
-func (s DurationScanner[S, T]) ConvertFloat(conv func(time.Duration) (float64, error)) FloatScanner[S, T] {
-	return FloatScanner[S, T]{
-		schema:   s.schema,
-		nullable: s.nullable,
-		convert: func(src S) (float64, error) {
-			val, err := s.convert(src)
-			if err != nil {
-				return 0, err
-			}
-
-			return conv(val)
-		},
-	}
-}
-
-func (s DurationScanner[S, T]) Hours() FloatScanner[S, T] {
-	return s.ConvertFloat(func(d time.Duration) (float64, error) {
-		return d.Hours(), nil
-	})
-}
-
-func (s DurationScanner[S, T]) Minutes() FloatScanner[S, T] {
-	return s.ConvertFloat(func(d time.Duration) (float64, error) {
-		return d.Minutes(), nil
-	})
-}
-
-func (s DurationScanner[S, T]) Seconds() FloatScanner[S, T] {
-	return s.ConvertFloat(func(d time.Duration) (float64, error) {
-		return d.Seconds(), nil
-	})
-}
-
-type BytesScanner[S, T any] struct {
-	schema   *Schema[T]
+type BytesScanner[S any] struct {
 	nullable bool
-	convert  func(src S) (sql.RawBytes, error)
+	convert  func(src S) ([]byte, error)
 }
 
-func (s BytesScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
+func (s BytesScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
 }
 
-func (s BytesScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
+func (s BytesScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
 }
 
-//nolint:gochecknoglobals
 var bytesType = reflect.TypeFor[[]byte]()
 
-func (s BytesScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var set func(t *T, src sql.RawBytes) error
-
-	switch {
-	case f.Type == bytesType:
-		set = func(t *T, src sql.RawBytes) error {
-			*(*[]byte)(f.Pointer(t)) = slices.Clone(src)
+func (s BytesScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []byte) error, error) {
+	if dstType == bytesType {
+		return func(dst reflect.Value, conv []byte) error {
+			*dst.Addr().Interface().(*[]byte) = conv
 
 			return nil
-		}
-	case f.DerefType == bytesType:
-		set = func(t *T, src sql.RawBytes) error {
-			f.AccessDeref(t).Set(reflect.ValueOf(slices.Clone(src)))
+		}, nil
+	}
+
+	if bytesType.ConvertibleTo(dstType) {
+		return func(dst reflect.Value, conv []byte) error {
+			dst.Set(reflect.ValueOf(conv).Convert(dstType))
 
 			return nil
-		}
-	case bytesType.ConvertibleTo(f.DerefType):
-		set = func(t *T, src sql.RawBytes) error {
-			f.AccessDeref(t).Set(reflect.ValueOf(slices.Clone(src)).Convert(f.DerefType))
-
-			return nil
-		}
-	default:
-		return nil, fmt.Errorf("field %s: not assignable to []byte: %s", path, f.DerefType)
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justBytesPointer {
-		return valueFieldScanner[sql.RawBytes, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src sql.RawBytes) error {
-				return set(t, src)
-			},
 		}, nil
 	}
 
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			return set(t, val)
-		},
-	}, nil
+	return nil, fmt.Errorf("%s is not assignable to []byte value", dstType)
 }
 
-func (s BytesScanner[S, T]) JSON() JSONScanner[S, T] {
-	return JSONScanner[S, T](s)
-}
-
-func (s BytesScanner[S, T]) Text() TextScanner[S, T] {
-	return TextScanner[S, T](s)
-}
-
-func (s BytesScanner[S, T]) Binary() BinaryScanner[S, T] {
-	return BinaryScanner[S, T](s)
-}
-
-type JSONScanner[S, T any] struct {
-	schema   *Schema[T]
-	nullable bool
-	convert  func(src S) (sql.RawBytes, error)
-}
-
-func (s JSONScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s JSONScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-func (s JSONScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justBytesPointer {
-		return valueFieldScanner[sql.RawBytes, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src sql.RawBytes) error {
-				return json.Unmarshal(src, f.AccessDeref(t).Addr().Interface())
-			},
-		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			return json.Unmarshal(val, f.AccessDeref(t).Addr().Interface())
-		},
-	}, nil
-}
-
-type TextScanner[S, T any] struct {
-	schema   *Schema[T]
-	nullable bool
-	convert  func(src S) (sql.RawBytes, error)
-}
-
-func (s TextScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s TextScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var unmarshalTextType = reflect.TypeFor[encoding.TextUnmarshaler]()
-
-//nolint:dupl
-func (s TextScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	if !reflect.PointerTo(f.DerefType).Implements(unmarshalTextType) {
-		return nil, fmt.Errorf("field %s: encoding.TextUnmarshaler not implemented: %s", path, f.DerefType)
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justBytesPointer {
-		return valueFieldScanner[sql.RawBytes, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src sql.RawBytes) error {
-				//nolint:forcetypeassert
-				return f.AccessDeref(t).Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(src)
-			},
-		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			//nolint:forcetypeassert
-			return f.AccessDeref(t).Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(val)
-		},
-	}, nil
-}
-
-type BinaryScanner[S, T any] struct {
-	schema   *Schema[T]
-	nullable bool
-	convert  func(src S) (sql.RawBytes, error)
-}
-
-func (s BinaryScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s BinaryScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-//nolint:gochecknoglobals
-var unmarshalBinaryType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
-
-//nolint:dupl
-func (s BinaryScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
-	}
-
-	if !reflect.PointerTo(f.DerefType).Implements(unmarshalBinaryType) {
-		return nil, fmt.Errorf("field %s: encoding.BinaryUnmarshaler not implemented: %s", path, f.DerefType)
-	}
-
-	if reflect.ValueOf(s.convert).Pointer() == justBytesPointer {
-		return valueFieldScanner[sql.RawBytes, T]{
-			nullable: s.nullable,
-			field:    f,
-			setter: func(t *T, src sql.RawBytes) error {
-				//nolint:forcetypeassert
-				return f.AccessDeref(t).Addr().Interface().(encoding.BinaryUnmarshaler).UnmarshalBinary(src)
-			},
-		}, nil
-	}
-
-	return valueFieldScanner[S, T]{
-		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
-			val, err := s.convert(src)
-			if err != nil {
-				return err
-			}
-
-			//nolint:forcetypeassert
-			return f.AccessDeref(t).Addr().Interface().(encoding.BinaryUnmarshaler).UnmarshalBinary(val)
-		},
-	}, nil
-}
-
-type StringSliceScanner[S, T any] struct {
-	schema   *Schema[T]
+type StringSliceScanner[S any] struct {
 	nullable bool
 	convert  func(src S) ([]string, error)
 }
 
-func (s StringSliceScanner[S, T]) Scan() (any, func(*T) error) {
-	return s.MustTo("").Scan()
-}
-
-func (s StringSliceScanner[S, T]) MustTo(path string) Scanner[T] {
-	return must(s.To(path))
-}
-
-func (s StringSliceScanner[S, T]) Convert(conv Convert[[]string, []string]) StringSliceScanner[S, T] {
-	return StringSliceScanner[S, T]{
-		schema:   s.schema,
+func (s StringSliceScanner[S]) Asc() StringSliceScanner[S] {
+	return StringSliceScanner[S]{
 		nullable: s.nullable,
 		convert: func(src S) ([]string, error) {
-			res, err := s.convert(src)
+			val, err := s.convert(src)
 			if err != nil {
 				return nil, err
 			}
 
-			return conv(res)
+			slices.Sort(val)
+
+			return val, nil
 		},
 	}
 }
 
-func (s StringSliceScanner[S, T]) Asc() StringSliceScanner[S, T] {
-	return s.Convert(func(src []string) ([]string, error) {
-		slices.Sort(src)
+func (s StringSliceScanner[S]) Desc() StringSliceScanner[S] {
+	return StringSliceScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) ([]string, error) {
+			val, err := s.convert(src)
+			if err != nil {
+				return nil, err
+			}
 
-		return src, nil
-	})
+			slices.Sort(val)
+			slices.Reverse(val)
+
+			return val, nil
+		},
+	}
 }
 
-func (s StringSliceScanner[S, T]) Desc() StringSliceScanner[S, T] {
-	return s.Convert(func(src []string) ([]string, error) {
-		slices.Sort(src)
-		slices.Reverse(src)
+func (s StringSliceScanner[S]) ParseInt(base int, bitSize int) IntSliceScanner[S] {
+	return IntSliceScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) ([]int64, error) {
+			val, err := s.convert(src)
+			if err != nil {
+				return nil, err
+			}
 
-		return src, nil
-	})
+			conv := make([]int64, len(val))
+
+			for i, v := range val {
+				c, err := strconv.ParseInt(v, base, bitSize)
+				if err != nil {
+					return nil, err
+				}
+
+				conv[i] = c
+			}
+
+			return conv, nil
+		},
+	}
 }
 
-//nolint:gochecknoglobals
+func (s StringSliceScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
+}
+
+func (s StringSliceScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
+
 var stringSliceType = reflect.TypeFor[[]string]()
 
-//nolint:funlen,cyclop
-func (s StringSliceScanner[S, T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
+func (s StringSliceScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []string) error, error) {
+	if dstType == stringSliceType {
+		return func(dst reflect.Value, conv []string) error {
+			*dst.Addr().Interface().(*[]string) = conv
+
+			return nil
+		}, nil
 	}
 
-	var set func(t *T, src []string) error
-
-	switch {
-	case f.Type == stringSliceType:
-		set = func(t *T, src []string) error {
-			*(*[]string)(f.Pointer(t)) = src
+	if stringSliceType.ConvertibleTo(dstType) {
+		return func(dst reflect.Value, conv []string) error {
+			dst.Set(reflect.ValueOf(conv).Convert(dstType))
 
 			return nil
-		}
-	case f.DerefType == stringSliceType:
-		set = func(t *T, src []string) error {
-			f.AccessDeref(t).Set(reflect.ValueOf(src))
-
-			return nil
-		}
-	case f.DerefKind == reflect.Array && derefType(f.DerefType.Elem()).Kind() == reflect.String:
-		set = func(t *T, src []string) error {
-			if len(src) > f.DerefType.Len() {
-				return fmt.Errorf("field %s: too many elements for %s: %d", path, f.DerefType, len(src))
-			}
-
-			dst := f.AccessDeref(t)
-
-			for i, p := range src {
-				derefDst(dst.Index(i)).SetString(p)
-			}
-
-			return nil
-		}
-	case f.DerefKind == reflect.Slice && derefType(f.DerefType.Elem()).Kind() == reflect.String:
-		set = func(t *T, src []string) error {
-			dst := f.AccessDeref(t)
-
-			dst.Set(reflect.MakeSlice(f.DerefType, len(src), len(src)))
-
-			for i, p := range src {
-				derefDst(dst.Index(i)).SetString(p)
-			}
-
-			return nil
-		}
-	default:
-		return nil, fmt.Errorf("field %s: not assignable to []string: %s", path, f.DerefType)
+		}, nil
 	}
 
-	return valueFieldScanner[S, T]{
+	if dstType.Kind() == reflect.Slice && derefType(dstType.Elem()).Kind() == reflect.String {
+		return func(dst reflect.Value, conv []string) error {
+			dst.Set(reflect.MakeSlice(dstType, len(conv), len(conv)))
+
+			for i, v := range conv {
+				deref(dst.Index(i)).SetString(v)
+			}
+
+			return nil
+		}, nil
+	}
+
+	return nil, fmt.Errorf("%s is not assignable to []string value", dstType)
+}
+
+type IntSliceScanner[S any] struct {
+	nullable bool
+	convert  func(src S) ([]int64, error)
+}
+
+func (s IntSliceScanner[S]) Asc() IntSliceScanner[S] {
+	return IntSliceScanner[S]{
 		nullable: s.nullable,
-		field:    f,
-		setter: func(t *T, src S) error {
+		convert: func(src S) ([]int64, error) {
 			val, err := s.convert(src)
+			if err != nil {
+				return nil, err
+			}
+
+			slices.Sort(val)
+
+			return val, nil
+		},
+	}
+}
+
+func (s IntSliceScanner[S]) Desc() IntSliceScanner[S] {
+	return IntSliceScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) ([]int64, error) {
+			val, err := s.convert(src)
+			if err != nil {
+				return nil, err
+			}
+
+			slices.Sort(val)
+			slices.Reverse(val)
+
+			return val, nil
+		},
+	}
+}
+
+func (s IntSliceScanner[S]) Format(base int) StringSliceScanner[S] {
+	return StringSliceScanner[S]{
+		nullable: s.nullable,
+		convert: func(src S) ([]string, error) {
+			val, err := s.convert(src)
+			if err != nil {
+				return nil, err
+			}
+
+			conv := make([]string, len(val))
+
+			for i, v := range val {
+				conv[i] = strconv.FormatInt(v, base)
+			}
+
+			return conv, nil
+		},
+	}
+}
+
+func (s IntSliceScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
+}
+
+func (s IntSliceScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
+
+var int64SliceType = reflect.TypeFor[[]int64]()
+
+func (s IntSliceScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []int64) error, error) {
+	if dstType == int64SliceType {
+		return func(dst reflect.Value, conv []int64) error {
+			*dst.Addr().Interface().(*[]int64) = conv
+
+			return nil
+		}, nil
+	}
+
+	if int64SliceType.ConvertibleTo(dstType) {
+		return func(dst reflect.Value, conv []int64) error {
+			dst.Set(reflect.ValueOf(conv).Convert(dstType))
+
+			return nil
+		}, nil
+	}
+
+	if dstType.Kind() == reflect.Slice {
+		switch derefType(dstType.Elem()).Kind() {
+		case reflect.Int64, reflect.Int32, reflect.Int16, reflect.Int8, reflect.Int:
+			return func(dst reflect.Value, conv []int64) error {
+				dst.Set(reflect.MakeSlice(dstType, len(conv), len(conv)))
+
+				for i, v := range conv {
+					deref(dst.Index(i)).SetInt(v)
+				}
+
+				return nil
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("%s is not assignable to []int64 value", dstType)
+}
+
+type JSONScanner[S any] struct {
+	nullable bool
+	convert  func(src S) (sql.RawBytes, error)
+}
+
+func (s JSONScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
+}
+
+func (s JSONScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
+
+func (s JSONScanner[S]) setter(_ reflect.Type) (func(dst reflect.Value, conv sql.RawBytes) error, error) {
+	return func(dst reflect.Value, conv sql.RawBytes) error {
+		return json.Unmarshal(conv, dst.Addr().Interface())
+	}, nil
+}
+
+type TextScanner[S any] struct {
+	nullable bool
+	convert  func(src S) (sql.RawBytes, error)
+}
+
+func (s TextScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
+}
+
+func (s TextScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
+
+var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
+
+func (s TextScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv sql.RawBytes) error, error) {
+	if reflect.PointerTo(dstType).Implements(textUnmarshalerType) {
+		return func(dst reflect.Value, conv sql.RawBytes) error {
+			return dst.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(conv)
+		}, nil
+	}
+
+	return nil, fmt.Errorf("%s doesn't implement encoding.TextUnmarshaler", dstType)
+}
+
+type BinaryScanner[S any] struct {
+	nullable bool
+	convert  func(src S) (sql.RawBytes, error)
+}
+
+func (s BinaryScanner[S]) To(path string) Scanner {
+	return indirectScanFunc(s.nullable, s.setter, s.convert, path)
+}
+
+func (s BinaryScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return s.To("").Scan(typ)
+}
+
+var binaryUnmarshalerType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
+
+func (s BinaryScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv sql.RawBytes) error, error) {
+	if reflect.PointerTo(dstType).Implements(binaryUnmarshalerType) {
+		return func(dst reflect.Value, conv sql.RawBytes) error {
+			return dst.Addr().Interface().(encoding.BinaryUnmarshaler).UnmarshalBinary(conv)
+		}, nil
+	}
+
+	return nil, fmt.Errorf("%s doesn't implement encoding.BinaryUnmarshaler", dstType)
+}
+
+type ScanFunc func(typ reflect.Type) (any, func(dst reflect.Value) error, error)
+
+func (sf ScanFunc) Scan(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+	return sf(typ)
+}
+
+func indirectScanFunc[S, C any](
+	nullable bool,
+	setter func(dstType reflect.Type) (func(dst reflect.Value, conv C) error, error),
+	convert func(src S) (C, error),
+	path string,
+) ScanFunc {
+	return func(typ reflect.Type) (any, func(dst reflect.Value) error, error) {
+		indices, dstType, err := accessor(typ, path)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		set, err := setter(dstType)
+		if err != nil {
+			if path != "" {
+				return nil, nil, fmt.Errorf("path %s: %w", path, err)
+			}
+
+			return nil, nil, err
+		}
+
+		if nullable {
+			var src sql.Null[S]
+
+			return &src, func(dst reflect.Value) error {
+				if !src.Valid {
+					return nil
+				}
+
+				conv, err := convert(src.V)
+				if err != nil {
+					return err
+				}
+
+				return set(access(dst, indices), conv)
+			}, nil
+		}
+
+		var src S
+
+		return &src, func(dst reflect.Value) error {
+			conv, err := convert(src)
 			if err != nil {
 				return err
 			}
 
-			return set(t, val)
-		},
-	}, nil
+			return set(access(dst, indices), conv)
+		}, nil
+	}
 }
 
-type Assigner interface {
-	Scan(src any) error
-	AssignTo(dst any) error
-}
-
-type AssignScanner[T any] struct {
-	schema   *Schema[T]
-	nullable bool
-	init     func() Assigner
-}
-
-func (s AssignScanner[T]) To(path string) (Scanner[T], error) {
-	f, err := s.schema.Field(path)
-	if err != nil {
-		return nil, err
+func accessor(dstType reflect.Type, path string) ([]int, reflect.Type, error) {
+	if path == "" {
+		return nil, derefType(dstType), nil
 	}
 
-	return valueFieldScanner[any, T]{
-		nullable: false,
-		field:    f,
-		setter: func(t *T, src any) error {
-			if !s.nullable && src == nil {
-				return fmt.Errorf("field %s: is not nullable", path)
-			}
+	var indices []int
 
-			a := s.init()
-
-			if err := a.Scan(src); err != nil {
-				return fmt.Errorf("field %s: %w", path, err)
-			}
-
-			return a.AssignTo(f.AccessDeref(t).Addr().Interface())
-		},
-	}, nil
-}
-
-type valueFieldScanner[V, T any] struct {
-	setter   func(t *T, src V) error
-	field    Field[T]
-	nullable bool
-}
-
-func (s valueFieldScanner[V, T]) Scan() (any, func(t *T) error) {
-	if s.nullable {
-		var src sql.Null[V]
-
-		return &src, func(t *T) error {
-			if !src.Valid {
-				if s.field.Type.Kind() == reflect.Pointer {
-					s.field.Access(t).SetZero()
-				}
-
-				return nil
-			}
-
-			return s.setter(t, src.V)
+	for p := range strings.SplitSeq(path, ".") {
+		sf, ok := derefType(dstType).FieldByName(p)
+		if !ok {
+			return nil, nil, fmt.Errorf("path %s: not found", path)
 		}
+
+		if !sf.IsExported() {
+			return nil, nil, fmt.Errorf("path %s: not exported", path)
+		}
+
+		dstType = sf.Type
+
+		indices = append(indices, sf.Index...)
 	}
 
-	var src V
-
-	return &src, func(t *T) error {
-		return s.setter(t, src)
-	}
-}
-
-type Convert[S, V any] func(src S) (V, error)
-
-func just[V any]() Convert[V, V] {
-	return func(src V) (V, error) {
-		return src, nil
-	}
-}
-
-//nolint:gochecknoglobals
-var (
-	justString   = just[string]()
-	justInt      = just[int64]()
-	justUint     = just[uint64]()
-	justFloat    = just[float64]()
-	justBool     = just[bool]()
-	justTime     = just[time.Time]()
-	justDuration = just[time.Duration]()
-	justBytes    = just[sql.RawBytes]()
-
-	justStringPointer   = reflect.ValueOf(justString).Pointer()
-	justIntPointer      = reflect.ValueOf(justInt).Pointer()
-	justUintPointer     = reflect.ValueOf(justUint).Pointer()
-	justFloatPointer    = reflect.ValueOf(justFloat).Pointer()
-	justBoolPointer     = reflect.ValueOf(justBool).Pointer()
-	justTimePointer     = reflect.ValueOf(justTime).Pointer()
-	justDurationPointer = reflect.ValueOf(justDuration).Pointer()
-	justBytesPointer    = reflect.ValueOf(justBytes).Pointer()
-)
-
-type Setter[V, T any] func(t *T, src V) error
-
-func makeSetter[V, T any](
-	field Field[T],
-	typ reflect.Type,
-	pointerType reflect.Type,
-	kinds []reflect.Kind,
-	set func(dst reflect.Value, src V) error) (Setter[V, T], error) {
-	switch {
-	case field.Type == typ:
-		return func(t *T, src V) error {
-			*(*V)(field.Pointer(t)) = src
-
-			return nil
-		}, nil
-	case field.Type == pointerType:
-		return func(t *T, src V) error {
-			*(**V)(field.Pointer(t)) = &src
-
-			return nil
-		}, nil
-	case field.DerefType == typ:
-		return func(t *T, src V) error {
-			field.AccessDeref(t).Set(reflect.ValueOf(src))
-
-			return nil
-		}, nil
-	case slices.Contains(kinds, field.DerefKind) && set != nil:
-		return func(t *T, src V) error {
-			return set(field.AccessDeref(t), src)
-		}, nil
-	case typ.ConvertibleTo(field.DerefType):
-		return func(t *T, src V) error {
-			field.AccessDeref(t).Set(reflect.ValueOf(src).Convert(field.DerefType))
-
-			return nil
-		}, nil
-	default:
-		return nil, fmt.Errorf("not assignable to %s: %s", typ, field.DerefType)
-	}
+	return indices, derefType(dstType), nil
 }
 
 func derefType(t reflect.Type) reflect.Type {
@@ -2419,7 +1421,7 @@ func derefType(t reflect.Type) reflect.Type {
 	return t
 }
 
-func derefDst(dst reflect.Value) reflect.Value {
+func deref(dst reflect.Value) reflect.Value {
 	for dst.Kind() == reflect.Pointer {
 		if dst.IsNil() {
 			dst.Set(reflect.New(dst.Type().Elem()))
@@ -2431,10 +1433,10 @@ func derefDst(dst reflect.Value) reflect.Value {
 	return dst
 }
 
-func must[T any](t T, err error) T {
-	if err != nil {
-		panic(err)
+func access(dst reflect.Value, indices []int) reflect.Value {
+	for _, idx := range indices {
+		dst = deref(dst).Field(idx)
 	}
 
-	return t
+	return deref(dst)
 }
