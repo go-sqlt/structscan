@@ -819,7 +819,7 @@ func (s UintScanner[S]) Scan(typ reflect.Type) (any, func(dst reflect.Value) err
 	return s.To("").Scan(typ)
 }
 
-var uint64Type = reflect.TypeFor[int64]()
+var uint64Type = reflect.TypeFor[uint64]()
 
 func (s UintScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv uint64) error, error) {
 	if dstType == uint64Type {
@@ -862,7 +862,7 @@ func (s UintScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, co
 			v := float64(conv)
 
 			if dst.OverflowFloat(v) {
-				return fmt.Errorf("overflow of int64 value %d to %s", conv, dstType)
+				return fmt.Errorf("overflow of uint64 value %d to %s", conv, dstType)
 			}
 
 			dst.SetFloat(v)
@@ -871,7 +871,7 @@ func (s UintScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, co
 		}, nil
 	}
 
-	return nil, fmt.Errorf("%s is not assignable to int64 value", dstType)
+	return nil, fmt.Errorf("%s is not assignable to uint64 value", dstType)
 }
 
 type FloatScanner[S any] struct {
@@ -1388,15 +1388,15 @@ func indirectScanFunc[S, C any](
 	}
 }
 
-func accessor(dstType reflect.Type, path string) ([]int, reflect.Type, error) {
+func accessor(typ reflect.Type, path string) ([]int, reflect.Type, error) {
 	if path == "" {
-		return nil, derefType(dstType), nil
+		return nil, derefType(typ), nil
 	}
 
 	var indices []int
 
 	for p := range strings.SplitSeq(path, ".") {
-		sf, ok := derefType(dstType).FieldByName(p)
+		sf, ok := derefType(typ).FieldByName(p)
 		if !ok {
 			return nil, nil, fmt.Errorf("path %s: not found", path)
 		}
@@ -1405,12 +1405,12 @@ func accessor(dstType reflect.Type, path string) ([]int, reflect.Type, error) {
 			return nil, nil, fmt.Errorf("path %s: not exported", path)
 		}
 
-		dstType = sf.Type
+		typ = sf.Type
 
 		indices = append(indices, sf.Index...)
 	}
 
-	return indices, derefType(dstType), nil
+	return indices, derefType(typ), nil
 }
 
 func derefType(t reflect.Type) reflect.Type {
