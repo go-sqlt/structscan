@@ -108,7 +108,7 @@ func (s *Schema[T]) GetRunner() (*Runner[T], error) {
 		return nil, r
 	}
 
-	return nil, fmt.Errorf("invalid runner")
+	return nil, errors.New("unknown error")
 }
 
 func (s *Schema[T]) PutRunner(r *Runner[T]) {
@@ -156,8 +156,10 @@ func (s *Schema[T]) First(rows Rows) (T, error) {
 
 func NewRunner[T any](scanners ...Scanner) (*Runner[T], error) {
 	if len(scanners) == 0 {
-		var typ = derefType(reflect.TypeFor[T]())
-		var val = reflect.New(typ)
+		var (
+			typ = derefType(reflect.TypeFor[T]())
+			val = reflect.New(typ)
+		)
 
 		return &Runner[T]{
 			Src: []any{val.Interface()},
@@ -284,7 +286,7 @@ type Scanner interface {
 }
 
 func Scan() DefaultScanner {
-	return DefaultScanner{}
+	return DefaultScanner{nullable: false}
 }
 
 type DefaultScanner struct {
@@ -292,7 +294,7 @@ type DefaultScanner struct {
 }
 
 func Nullable() DefaultScanner {
-	return DefaultScanner{}.Nullable()
+	return DefaultScanner{nullable: false}.Nullable()
 }
 
 func (s DefaultScanner) Nullable() DefaultScanner {
@@ -302,7 +304,7 @@ func (s DefaultScanner) Nullable() DefaultScanner {
 }
 
 func String() StringScanner[string] {
-	return DefaultScanner{}.String()
+	return DefaultScanner{nullable: false}.String()
 }
 
 func (s DefaultScanner) String() StringScanner[string] {
@@ -313,7 +315,7 @@ func (s DefaultScanner) String() StringScanner[string] {
 }
 
 func Int() IntScanner[int64] {
-	return DefaultScanner{}.Int()
+	return DefaultScanner{nullable: false}.Int()
 }
 
 func (s DefaultScanner) Int() IntScanner[int64] {
@@ -324,7 +326,7 @@ func (s DefaultScanner) Int() IntScanner[int64] {
 }
 
 func Uint() UintScanner[uint64] {
-	return DefaultScanner{}.Uint()
+	return DefaultScanner{nullable: false}.Uint()
 }
 
 func (s DefaultScanner) Uint() UintScanner[uint64] {
@@ -335,7 +337,7 @@ func (s DefaultScanner) Uint() UintScanner[uint64] {
 }
 
 func Float() FloatScanner[float64] {
-	return DefaultScanner{}.Float()
+	return DefaultScanner{nullable: false}.Float()
 }
 
 func (s DefaultScanner) Float() FloatScanner[float64] {
@@ -346,7 +348,7 @@ func (s DefaultScanner) Float() FloatScanner[float64] {
 }
 
 func Bool() BoolScanner[bool] {
-	return DefaultScanner{}.Bool()
+	return DefaultScanner{nullable: false}.Bool()
 }
 
 func (s DefaultScanner) Bool() BoolScanner[bool] {
@@ -357,7 +359,7 @@ func (s DefaultScanner) Bool() BoolScanner[bool] {
 }
 
 func Time() TimeScanner[time.Time] {
-	return DefaultScanner{}.Time()
+	return DefaultScanner{nullable: false}.Time()
 }
 
 func (s DefaultScanner) Time() TimeScanner[time.Time] {
@@ -368,7 +370,7 @@ func (s DefaultScanner) Time() TimeScanner[time.Time] {
 }
 
 func Bytes() BytesScanner[[]byte] {
-	return DefaultScanner{}.Bytes()
+	return DefaultScanner{nullable: false}.Bytes()
 }
 
 func (s DefaultScanner) Bytes() BytesScanner[[]byte] {
@@ -379,7 +381,7 @@ func (s DefaultScanner) Bytes() BytesScanner[[]byte] {
 }
 
 func StringSlice() StringSliceScanner[[]string] {
-	return DefaultScanner{}.StringSlice()
+	return DefaultScanner{nullable: false}.StringSlice()
 }
 
 func (s DefaultScanner) StringSlice() StringSliceScanner[[]string] {
@@ -390,7 +392,7 @@ func (s DefaultScanner) StringSlice() StringSliceScanner[[]string] {
 }
 
 func IntSlice() IntSliceScanner[[]int64] {
-	return DefaultScanner{}.IntSlice()
+	return DefaultScanner{nullable: false}.IntSlice()
 }
 
 func (s DefaultScanner) IntSlice() IntSliceScanner[[]int64] {
@@ -401,7 +403,7 @@ func (s DefaultScanner) IntSlice() IntSliceScanner[[]int64] {
 }
 
 func JSON() JSONScanner[sql.RawBytes] {
-	return DefaultScanner{}.JSON()
+	return DefaultScanner{nullable: false}.JSON()
 }
 
 func (s DefaultScanner) JSON() JSONScanner[sql.RawBytes] {
@@ -412,7 +414,7 @@ func (s DefaultScanner) JSON() JSONScanner[sql.RawBytes] {
 }
 
 func Text() TextScanner[sql.RawBytes] {
-	return DefaultScanner{}.Text()
+	return DefaultScanner{nullable: false}.Text()
 }
 
 func (s DefaultScanner) Text() TextScanner[sql.RawBytes] {
@@ -423,7 +425,7 @@ func (s DefaultScanner) Text() TextScanner[sql.RawBytes] {
 }
 
 func Binary() BinaryScanner[sql.RawBytes] {
-	return DefaultScanner{}.Binary()
+	return DefaultScanner{nullable: false}.Binary()
 }
 
 func (s DefaultScanner) Binary() BinaryScanner[sql.RawBytes] {
@@ -434,7 +436,7 @@ func (s DefaultScanner) Binary() BinaryScanner[sql.RawBytes] {
 }
 
 func To(path string) Scanner {
-	return DefaultScanner{}.To(path)
+	return DefaultScanner{nullable: false}.To(path)
 }
 
 func (s DefaultScanner) To(path string) Scanner {
@@ -675,6 +677,7 @@ var stringType = reflect.TypeFor[string]()
 func (s StringScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv string) error, error) {
 	if dstType == stringType {
 		return func(dst reflect.Value, conv string) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*string) = conv
 
 			return nil
@@ -699,6 +702,7 @@ type IntScanner[S any] struct {
 
 func (s IntScanner[S]) Format(base int) StringScanner[S] {
 	return StringScanner[S]{
+		nullable: s.nullable,
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
@@ -743,12 +747,14 @@ var intType = reflect.TypeFor[int64]()
 func (s IntScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv int64) error, error) {
 	if dstType == intType {
 		return func(dst reflect.Value, conv int64) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*int64) = conv
 
 			return nil
 		}, nil
 	}
 
+	//nolint:exhaustive
 	switch dstType.Kind() {
 	case reflect.Int64, reflect.Int32, reflect.Int16, reflect.Int8, reflect.Int:
 		return func(dst reflect.Value, conv int64) error {
@@ -800,6 +806,7 @@ type UintScanner[S any] struct {
 
 func (s UintScanner[S]) Format(base int) StringScanner[S] {
 	return StringScanner[S]{
+		nullable: s.nullable,
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
@@ -824,12 +831,14 @@ var uint64Type = reflect.TypeFor[uint64]()
 func (s UintScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv uint64) error, error) {
 	if dstType == uint64Type {
 		return func(dst reflect.Value, conv uint64) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*uint64) = conv
 
 			return nil
 		}, nil
 	}
 
+	//nolint:exhaustive
 	switch dstType.Kind() {
 	case reflect.Uint64, reflect.Uint32, reflect.Uint16, reflect.Uint8, reflect.Uint:
 		return func(dst reflect.Value, conv uint64) error {
@@ -881,6 +890,7 @@ type FloatScanner[S any] struct {
 
 func (s FloatScanner[S]) Format(fmt byte, prec int, bitSize int) StringScanner[S] {
 	return StringScanner[S]{
+		nullable: s.nullable,
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
@@ -905,12 +915,14 @@ var float64Type = reflect.TypeFor[float64]()
 func (s FloatScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv float64) error, error) {
 	if dstType == float64Type {
 		return func(dst reflect.Value, conv float64) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*float64) = conv
 
 			return nil
 		}, nil
 	}
 
+	//nolint:exhaustive
 	switch dstType.Kind() {
 	case reflect.Float64, reflect.Float32:
 		return func(dst reflect.Value, conv float64) error {
@@ -930,6 +942,7 @@ type BoolScanner[S any] struct {
 
 func (s BoolScanner[S]) Format() StringScanner[S] {
 	return StringScanner[S]{
+		nullable: s.nullable,
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
@@ -954,6 +967,7 @@ var boolType = reflect.TypeFor[bool]()
 func (s BoolScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv bool) error, error) {
 	if dstType == boolType {
 		return func(dst reflect.Value, conv bool) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*bool) = conv
 
 			return nil
@@ -978,6 +992,7 @@ type TimeScanner[S any] struct {
 
 func (s TimeScanner[S]) Format(layout string) StringScanner[S] {
 	return StringScanner[S]{
+		nullable: s.nullable,
 		convert: func(src S) (string, error) {
 			val, err := s.convert(src)
 			if err != nil {
@@ -1002,6 +1017,7 @@ var timeType = reflect.TypeFor[time.Time]()
 func (s TimeScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv time.Time) error, error) {
 	if dstType == timeType {
 		return func(dst reflect.Value, conv time.Time) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*time.Time) = conv
 
 			return nil
@@ -1037,6 +1053,7 @@ var bytesType = reflect.TypeFor[[]byte]()
 func (s BytesScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []byte) error, error) {
 	if dstType == bytesType {
 		return func(dst reflect.Value, conv []byte) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*[]byte) = conv
 
 			return nil
@@ -1130,6 +1147,7 @@ var stringSliceType = reflect.TypeFor[[]string]()
 func (s StringSliceScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []string) error, error) {
 	if dstType == stringSliceType {
 		return func(dst reflect.Value, conv []string) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*[]string) = conv
 
 			return nil
@@ -1230,6 +1248,7 @@ var int64SliceType = reflect.TypeFor[[]int64]()
 func (s IntSliceScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv []int64) error, error) {
 	if dstType == int64SliceType {
 		return func(dst reflect.Value, conv []int64) error {
+			//nolint:forcetypeassert
 			*dst.Addr().Interface().(*[]int64) = conv
 
 			return nil
@@ -1245,6 +1264,7 @@ func (s IntSliceScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value
 	}
 
 	if dstType.Kind() == reflect.Slice {
+		//nolint:exhaustive
 		switch derefType(dstType.Elem()).Kind() {
 		case reflect.Int64, reflect.Int32, reflect.Int16, reflect.Int8, reflect.Int:
 			return func(dst reflect.Value, conv []int64) error {
@@ -1299,6 +1319,7 @@ var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
 func (s TextScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv sql.RawBytes) error, error) {
 	if reflect.PointerTo(dstType).Implements(textUnmarshalerType) {
 		return func(dst reflect.Value, conv sql.RawBytes) error {
+			//nolint:forcetypeassert
 			return dst.Addr().Interface().(encoding.TextUnmarshaler).UnmarshalText(conv)
 		}, nil
 	}
@@ -1324,6 +1345,7 @@ var binaryUnmarshalerType = reflect.TypeFor[encoding.BinaryUnmarshaler]()
 func (s BinaryScanner[S]) setter(dstType reflect.Type) (func(dst reflect.Value, conv sql.RawBytes) error, error) {
 	if reflect.PointerTo(dstType).Implements(binaryUnmarshalerType) {
 		return func(dst reflect.Value, conv sql.RawBytes) error {
+			//nolint:forcetypeassert
 			return dst.Addr().Interface().(encoding.BinaryUnmarshaler).UnmarshalBinary(conv)
 		}, nil
 	}

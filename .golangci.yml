@@ -11,6 +11,7 @@ linters:
     - revive
     - ireturn
     - err113
+    - gochecknoglobals
 
   exclusions:
     paths-except:
